@@ -10,13 +10,13 @@ Spectre is a work in progress toolkit for Hidden &amp; Dangerous 2.
 - DTA Unpacker (Planned)
 
 ## Editors
-- Inventory
+- Inventory (Planned)
    - Edit your save game inventories with ease
-- Items
+- Items (Planned)
    - Tweak values, edit or create items for the game
-- MP Maplist
+- MP Maplist (Planned)
    - An improved maplist constructor
-- Gamedata
+- Gamedata (Planned)
    - A gamedata editor allowing for campaign modifications
 
 # Credits
