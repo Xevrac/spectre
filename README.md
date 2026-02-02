@@ -2,3 +2,11 @@
 
 # Spectre
 Spectre is a work in progress toolkit for Hidden &amp; Dangerous 2.
+
+# Credits
+A special thanks to those who have worked on previous projects, shared knowledge, source code and supported the HD2 community. Notably:
+- Fis
+- Stern
+- snowmanflo
+- Jovan Stanojlovic
+- RellHaiser
