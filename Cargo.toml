@@ -20,4 +20,4 @@ version = "1.0"
 authors = ["Your Name <you@example.com>"]
 edition = "2021"
 name = "spectre"
-version = "0.0.64"
+version = "0.0.130"

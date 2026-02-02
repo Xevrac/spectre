@@ -19,6 +19,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = "Xevrac";
 const ABOUT: &str = "Spectre is a toolkit for Hidden & Dangerous 2, providing various editing and management tools for the game.";
 
+const CREDITS: &[&str] = &[
+    "Fis",
+    "Stern",
+    "snowmanflo",
+    "Jovan Stanojlovic",
+    "RellHaiser",
+];
+
 fn get_banner_size() -> Option<(f32, f32)> {
     let banner_bytes = include_bytes!("../spectre-banner.png");
     if let Ok(image) = image::load_from_memory(banner_bytes) {
@@ -43,18 +51,15 @@ fn load_icon() -> Option<Arc<IconData>> {
         }));
     }
     
-    // Fallback: create a simple default icon if embedded image fails to load
     Some(Arc::new(create_default_icon()))
 }
 
 fn create_default_icon() -> IconData {
-    // Create a simple default icon if image loading fails
     let size: u32 = 256;
     let size_usize = size as usize;
     let mut rgba = Vec::with_capacity(size_usize * size_usize * 4);
     for y in 0..size {
         for x in 0..size {
-            // Simple gradient pattern
             let r = ((x * 255) / size) as u8;
             let g = ((y * 255) / size) as u8;
             let b = 128u8;
@@ -72,12 +77,10 @@ fn create_default_icon() -> IconData {
 fn main() -> Result<(), eframe::Error> {
     println!("[DEBUG] Spectre v{} starting...", env!("CARGO_PKG_VERSION"));
     
-    // Get banner dimensions and scale down by factor of 2
     let banner_size = get_banner_size().unwrap_or((1024.0, 420.0));
     let window_size = (banner_size.0 / 2.0, banner_size.1 / 2.0);
     println!("[DEBUG] Banner size: {}x{} (scaled window: {}x{})", banner_size.0, banner_size.1, window_size.0, window_size.1);
     
-    // Load icon
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_inner_size([window_size.0, window_size.1])
         .with_title("Spectre")
@@ -123,7 +126,6 @@ impl SpectreApp {
         let config = Config::load();
         println!("[DEBUG] Configuration loaded: theme={}", config.theme);
         
-        // Apply theme on startup
         Self::apply_theme(&cc.egui_ctx, &config.theme);
         
         Self {
@@ -154,15 +156,12 @@ impl SpectreApp {
 
 impl eframe::App for SpectreApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Center window - try multiple times to ensure it works
         if !self.window_centered && self.center_attempts < 15 {
             self.center_attempts += 1;
             
-            // Try to get monitor size from viewport, fallback to screen_rect
             let monitor_size = ctx.input(|i| i.viewport().monitor_size);
             let screen_size = ctx.screen_rect().size();
             
-            // Use the first valid size we find
             let size_to_use = monitor_size
                 .filter(|s| s.x > 100.0 && s.y > 100.0)
                 .or_else(|| {
@@ -174,7 +173,6 @@ impl eframe::App for SpectreApp {
                 });
             
             if let Some(monitor_size) = size_to_use {
-                // Get banner size for initial window dimensions (scaled down by factor of 2)
                 let banner_size = get_banner_size().unwrap_or((1024.0, 420.0));
                 let window_size = (banner_size.0 / 2.0, banner_size.1 / 2.0);
                 let center_x = (monitor_size.x - window_size.0) / 2.0;
@@ -185,10 +183,8 @@ impl eframe::App for SpectreApp {
                              self.center_attempts, monitor_size.x, monitor_size.y, window_size.0, window_size.1, center_x, center_y);
                 }
                 
-                // Send centering command - try multiple times to ensure it takes effect
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
                 
-                // Only mark as centered after a few attempts to give it time to take effect
                 if self.center_attempts >= 3 {
                     self.window_centered = true;
                     println!("[DEBUG] Splash window centering complete");
@@ -196,16 +192,13 @@ impl eframe::App for SpectreApp {
             }
         }
         
-        // Show splash screen if it exists
         if let Some(ref mut splash) = self.splash_screen {
             if !splash.show(ctx) {
                 println!("[DEBUG] Splash screen finished, transitioning to main application");
                 self.splash_screen = None;
-                // Restore window decorations and resize to normal application size after splash
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1000.0, 700.0)));
                 println!("[DEBUG] Window resized to 1000x700 with decorations enabled");
-                // Re-center window after resize
                 let monitor_size = ctx.input(|i| i.viewport().monitor_size);
                 if let Some(monitor_size) = monitor_size {
                     let center_x = (monitor_size.x - 1000.0) / 2.0;
@@ -220,11 +213,10 @@ impl eframe::App for SpectreApp {
                     println!("[DEBUG] Main window re-centered (fallback) at: ({}, {})", center_x, center_y);
                 }
             } else {
-                return; // Don't show main UI while splash is active
+                return;
             }
         }
         
-        // Draw fully opaque grey background during fade-out transition to main app
         if let Some(ref splash) = self.splash_screen {
             if splash.is_fading_out() {
                 egui::Area::new(egui::Id::new("fade_overlay"))
@@ -232,8 +224,6 @@ impl eframe::App for SpectreApp {
                     .show(ctx, |ui| {
                         let screen_rect = ctx.screen_rect();
                         let painter = ui.painter();
-                        // Fully opaque grey background during fade-out
-                        // The overlay fades out as the main app becomes visible
                         let fade_alpha = splash.get_fade_out_alpha();
                         painter.rect_filled(
                             screen_rect,
@@ -244,15 +234,12 @@ impl eframe::App for SpectreApp {
             }
         }
         
-        // Menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                // Tool menu
                 ui.menu_button("Tool", |ui| {
 
                     ui.label(egui::RichText::new("Tools").strong());
 
-                    // Tools section
                     if ui.button("Server Utility").clicked() {
                         println!("[DEBUG] Module switched: Server Launcher");
                         self.current_module = Some(Box::new(ServerLauncher::default()));
@@ -267,7 +254,6 @@ impl eframe::App for SpectreApp {
                     ui.separator();
                     ui.label(egui::RichText::new("Editors").strong());
                     
-                    // Editors section
                     if ui.button("Inventory").clicked() {
                         println!("[DEBUG] Module switched: Inventory Editor");
                         self.current_module = Some(Box::new(InventoryEditor::default()));
@@ -292,13 +278,11 @@ impl eframe::App for SpectreApp {
                     }
                 });
 
-                // Options menu
                 if ui.button("Options").clicked() {
                     println!("[DEBUG] Options dialog opened");
                     self.show_options = true;
                 }
 
-                // About menu
                 if ui.button("About").clicked() {
                     println!("[DEBUG] About dialog opened");
                     self.show_about = true;
@@ -306,7 +290,6 @@ impl eframe::App for SpectreApp {
             });
         });
 
-        // Options dialog
         if self.show_options {
             egui::Window::new("Options")
                 .collapsible(false)
@@ -337,37 +320,51 @@ impl eframe::App for SpectreApp {
                 });
         }
 
-        // About dialog
         if self.show_about {
             egui::Window::new("About")
                 .collapsible(false)
-                .resizable(false)
+                .resizable(true)
+                .default_size([400.0, 500.0])
                 .show(ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading("Spectre");
-                        ui.add_space(10.0);
-                        ui.label(format!("Version: {}", self.version));
-                        ui.add_space(10.0);
-                        ui.label(format!("Author: {}", AUTHOR));
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.add_space(10.0);
-                        ui.label(ABOUT);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.heading("Spectre");
+                            ui.add_space(10.0);
+                            ui.label(format!("Version: {}", self.version));
+                            ui.add_space(10.0);
+                            ui.label(format!("Author: {}", AUTHOR));
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            ui.label(ABOUT);
+                            ui.add_space(20.0);
+                            
+                            ui.separator();
+                            ui.add_space(10.0);
+                            
+                            ui.label(egui::RichText::new("Credits").strong().size(16.0));
+                            ui.add_space(10.0);
+                            
+                            if CREDITS.is_empty() {
+                                ui.label(egui::RichText::new("No credits to display.").italics());
+                            } else {
+                                ui.label(CREDITS.join(", "));
+                            }
+                            
                             ui.add_space(20.0);
                             if ui.button("Close").clicked() {
                                 println!("[DEBUG] About dialog closed");
                                 self.show_about = false;
                             }
+                        });
                     });
                 });
         }
 
-        // Main content area
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(ref mut module) = self.current_module {
                 module.show(ctx, ui);
             } else {
-                // Default landing page
                 ui.vertical_centered(|ui| {
                     ui.add_space(50.0);
 

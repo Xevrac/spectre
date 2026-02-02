@@ -2879,7 +2879,7 @@ dependencies = [
 
 [[package]]
 name = "spectre"
-version = "0.0.63"
+version = "0.0.129"
 dependencies = [
  "eframe",
  "egui",

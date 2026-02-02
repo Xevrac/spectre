@@ -44,7 +44,6 @@ impl SplashScreen {
     }
     
     fn load_banner(&mut self, ctx: &egui::Context) {
-        // Load banner image embedded in binary
         let banner_bytes = include_bytes!("../spectre-banner.png");
         
         if let Ok(image) = image::load_from_memory(banner_bytes) {
@@ -77,25 +76,21 @@ impl SplashScreen {
             }
         };
         
-        // Use Area to fill the entire window without any padding
         egui::Area::new(egui::Id::new("splash_area"))
             .interactable(false)
             .show(ctx, |ui| {
                 let screen_rect = ctx.screen_rect();
                 let painter = ui.painter();
                 
-                // Background: always fully opaque black during splash (banner fades in/out on top)
-                // Fill the entire screen rect to avoid any borders
                 painter.rect_filled(
                     screen_rect,
                     0.0,
                     egui::Color32::BLACK,
                 );
                 
-                // Banner image - show at half size (factor of 2 reduction), just fade in/out
                 if let Some(ref texture) = self.banner_texture {
                     let banner_size = texture.size();
-                    let banner_size_vec = egui::vec2(banner_size[0] as f32 / 2.0, banner_size[1] as f32 / 2.0);
+                    let banner_size_vec = egui::vec2(banner_size[0] as f32 / 2.0 * 1.03, banner_size[1] as f32 / 2.0 * 1.03);
                     let banner_rect = egui::Rect::from_center_size(
                         screen_rect.center(),
                         banner_size_vec,
@@ -108,12 +103,10 @@ impl SplashScreen {
                         egui::Color32::from_white_alpha((255.0 * fade_progress) as u8),
                     );
                     
-                    // Orbit loader at bottom center of banner, slightly to the right
-                    let loader_y = banner_rect.bottom() - 20.0; // 20px from bottom of banner
-                    let loader_x = banner_rect.center().x + 10.0; // Slightly to the right for centering
+                    let loader_y = banner_rect.bottom() - 20.0;
+                    let loader_x = banner_rect.center().x + 10.0;
                     self.draw_orbit_loader(ui, loader_x, loader_y, fade_progress);
                 } else {
-                    // Show loader even if banner hasn't loaded yet
                     self.draw_orbit_loader(ui, screen_rect.center().x, screen_rect.center().y, fade_progress);
                 }
             });
@@ -125,43 +118,36 @@ impl SplashScreen {
     fn draw_orbit_loader(&self, ui: &egui::Ui, center_x: f32, center_y: f32, alpha: f32) {
         let painter = ui.painter();
         let time = self.start_time.elapsed().as_secs_f32();
-        let size = 17.5; // 0.5x smaller (was 35.0)
+        let size = 17.5;
         let speed = 1.5;
-        let dot_size_base = size * 0.4; // var(--uib-dot-size)
+        let dot_size_base = size * 0.4;
         
-        // Animation progress (0.0 to 1.0)
         let progress1 = (time * speed) % 1.0;
         let mut progress2 = (time * speed - 0.5) % 1.0;
         if progress2 < 0.0 {
             progress2 += 1.0;
         }
         
-        // Helper function to get transform values at a given progress
         let get_transform = |progress: f32| -> (f32, f32, f32) {
-            // Map progress to keyframe values
             let (translate_x, scale, opacity) = if progress <= 0.25 {
-                // 0% to 25%: from right edge to center
                 let t = progress / 0.25;
                 let translate_x = size * 0.25 * (1.0 - t);
                 let scale = 0.73684 + (0.47368 - 0.73684) * t;
                 let opacity = 0.65 + (0.3 - 0.65) * t;
                 (translate_x, scale, opacity)
             } else if progress <= 0.5 {
-                // 25% to 50%: from center to left edge
                 let t = (progress - 0.25) / 0.25;
                 let translate_x = size * -0.25 * t;
                 let scale = 0.47368 + (0.73684 - 0.47368) * t;
                 let opacity = 0.3 + (0.65 - 0.3) * t;
                 (translate_x, scale, opacity)
             } else if progress <= 0.75 {
-                // 50% to 75%: from left edge to center
                 let t = (progress - 0.5) / 0.25;
                 let translate_x = size * -0.25 * (1.0 - t);
                 let scale = 0.73684 + (1.0 - 0.73684) * t;
                 let opacity = 0.65 + (1.0 - 0.65) * t;
                 (translate_x, scale, opacity)
             } else {
-                // 75% to 100%: from center to right edge
                 let t = (progress - 0.75) / 0.25;
                 let translate_x = size * 0.25 * t;
                 let scale = 1.0 + (0.73684 - 1.0) * t;
@@ -171,12 +157,10 @@ impl SplashScreen {
             (translate_x, scale, opacity)
         };
         
-        // Draw first dot (::before)
         let (tx1, scale1, opacity1) = get_transform(progress1);
         let x1 = center_x + tx1;
         let dot_size1 = dot_size_base * scale1;
-        // White/grey color with opacity
-        let base_color = 200u8; // Light grey
+        let base_color = 200u8;
         let color1 = egui::Color32::from_rgba_unmultiplied(
             base_color,
             base_color,
@@ -189,7 +173,6 @@ impl SplashScreen {
             color1,
         );
         
-        // Draw second dot (::after) - offset by -50% of animation
         let (tx2, scale2, opacity2) = get_transform(progress2);
         let x2 = center_x + tx2;
         let dot_size2 = dot_size_base * scale2;

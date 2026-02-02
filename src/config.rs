@@ -7,7 +7,6 @@ const CONFIG_FILE: &str = "spectre_config.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub theme: String,
-    // Todo: Add more configuration options here as they are implemented
 }
 
 impl Default for Config {
@@ -35,7 +34,6 @@ impl Config {
             println!("[DEBUG] Config file not found, creating default");
         }
         
-        // Create default config if it doesn't exist or failed to load
         let default_config = Config::default();
         default_config.save();
         default_config
