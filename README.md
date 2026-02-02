@@ -1,4 +1,4 @@
-<img height="256" alt="image" src="https://github.com/user-attachments/assets/64988272-26b6-4a83-88fe-963ef2f29257" />
+<img width="1024" height="420" alt="spectre-banner" src="https://github.com/user-attachments/assets/dd2a5dac-0b8d-415b-ae7e-5d9437698334" />
 
 # Spectre
 Spectre is a work in progress toolkit for Hidden &amp; Dangerous 2.
