@@ -21,3 +21,11 @@ target
 #.idea/
 
 ref
+
+# Version tracking file
+.version
+
+# Configuration file
+spectre_config.json
+
+.cursorrules
