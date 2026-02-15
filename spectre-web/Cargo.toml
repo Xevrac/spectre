@@ -1,0 +1,28 @@
+# Spectre Web — main app: WebView2-based UI (Windows).
+# spectre-ui and spectre-core can depend on this crate.
+
+[package]
+name = "spectre-web"
+version = "0.1.0"
+edition = "2021"
+authors = ["Xevrac"]
+description = "Spectre main app: WebView2-based UI (Windows)"
+readme = "README.md"
+
+[lib]
+name = "spectre_web"
+path = "src/lib.rs"
+
+# No binary: this crate is library-only. The Server Utility web UI is embedded
+# in the main Spectre app (spectre-ui) via WebView2; do not run as standalone.
+
+[dependencies]
+spectre-core = { path = "../spectre-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# WebView2 (Windows only)
+[target.'cfg(windows)'.dependencies]
+tao = "0.25"
+wry = "0.38"
+windows = { version = "0.54", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

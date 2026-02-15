@@ -134,3 +134,4 @@ fn increment_version() {
         }
     }
 }
+

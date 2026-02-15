@@ -1,0 +1,89 @@
+//! WebView2 app host (Windows).
+//! Card content is embedded at compile time from spectre-web/content/<card_name>/.
+//! Source stays as separate files for editing; the binary is fully self-contained at runtime.
+
+#![cfg(windows)]
+
+use std::sync::Arc;
+use tao::event_loop::{ControlFlow, EventLoop};
+use tao::window::WindowBuilder;
+use wry::WebViewBuilder;
+
+/// Shared app state (for future use: config, bridge, etc.).
+#[derive(Default)]
+pub struct AppState {
+    _placeholder: (),
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+// ───── Compile-time embedding: source in spectre-web/content/<card_name>/ ─────
+// Paths are relative to this file (src/app.rs). Add new cards under content/<name>/ and a branch below.
+
+const SERVER_UTILITY_HTML: &str = include_str!("../content/server_utility/index.html");
+const SERVER_UTILITY_CSS: &str = include_str!("../content/server_utility/css/style.css");
+const SERVER_UTILITY_JS: &str = include_str!("../content/server_utility/js/app.js");
+
+fn embed_server_utility() -> String {
+    SERVER_UTILITY_HTML
+        .replace(
+            r#"<link rel="stylesheet" href="css/style.css">"#,
+            &format!("<style>{}</style>", SERVER_UTILITY_CSS),
+        )
+        .replace(
+            r#"<script src="js/app.js"></script>"#,
+            &format!("<script>{}</script>", SERVER_UTILITY_JS),
+        )
+}
+
+/// Returns the full inlined HTML for a card by name. Cards live under content/<card_name>/ and are embedded at build time.
+/// Used by spectre-ui to embed the WebView in the main window.
+pub fn embedded_card_html(card_name: &str) -> Result<String, String> {
+    match card_name {
+        "server_utility" => Ok(embed_server_utility()),
+        _ => Err(format!("Unknown card: '{}'. Cards are built into the binary at compile time.", card_name)),
+    }
+}
+
+/// Check that a card is available (embedded). For API compatibility.
+pub fn card_url(card_name: &str) -> Result<String, String> {
+    embedded_card_html(card_name).map(|_| "embedded".to_string())
+}
+
+/// Run the Spectre WebView2 app, loading the given card (e.g. "server_utility").
+pub fn run_app() -> Result<(), String> {
+    run_app_with_card("server_utility")
+}
+
+/// Run the app and load a specific card by name. Content is served from memory (embedded at compile time).
+pub fn run_app_with_card(card_name: &str) -> Result<(), String> {
+    let _state = Arc::new(AppState::new());
+    let html = embedded_card_html(card_name)?;
+
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Spectre")
+        .with_inner_size(tao::dpi::LogicalSize::new(1000.0, 700.0))
+        .build(&event_loop)
+        .map_err(|e| e.to_string())?;
+
+    let _webview = WebViewBuilder::new(&window)
+        .with_html(&html)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        if let tao::event::Event::WindowEvent {
+            event: tao::event::WindowEvent::CloseRequested,
+            ..
+        } = event
+        {
+            *control_flow = ControlFlow::Exit;
+        }
+    });
+}

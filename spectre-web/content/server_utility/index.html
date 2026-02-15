@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Server Utility — Spectre</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1 class="toolbar-title">Server Utility</h1>
+    <button type="button" class="btn btn-primary" id="save-config">Save Configuration</button>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <section class="sidebar-section" id="server-section">
+        <label class="sidebar-label">Server</label>
+        <select class="select" id="server-select" aria-label="Select server"></select>
+      </section>
+
+      <section class="sidebar-section">
+        <label class="sidebar-label">Profiles</label>
+        <div class="profile-list" id="profile-list" role="listbox" aria-label="Config profiles"></div>
+        <div class="sidebar-actions">
+          <button type="button" class="btn btn-sm" id="profile-new">New</button>
+          <button type="button" class="btn btn-sm" id="profile-delete">Delete</button>
+          <button type="button" class="btn btn-sm" id="profile-duplicate">Duplicate</button>
+        </div>
+      </section>
+
+      <section class="sidebar-section">
+        <label class="sidebar-label">Game</label>
+        <select class="select" id="game-select" aria-label="Game executable">
+          <option value="hd2">HD2</option>
+          <option value="sabre">HD2 Sabre Squadron</option>
+        </select>
+        <button type="button" class="btn btn-sm" id="edit-server">Edit server…</button>
+      </section>
+
+      <div class="sidebar-spacer"></div>
+      <button type="button" class="btn btn-start" id="start-server">Start Server</button>
+    </aside>
+
+    <main class="content">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" data-tab="maps" role="tab" aria-selected="true">Maps</button>
+        <button type="button" class="tab" data-tab="general" role="tab">General</button>
+        <button type="button" class="tab" data-tab="coop" role="tab">Coop</button>
+        <button type="button" class="tab" data-tab="advanced" role="tab">Advanced</button>
+      </div>
+
+      <div class="tab-panels">
+        <section class="tab-panel" id="panel-maps" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">Session &amp; game</h2>
+            <div class="form-row">
+              <label>Session name</label>
+              <input type="text" class="input" id="session-name" placeholder="HD2 Server">
+            </div>
+            <div class="form-row">
+              <label>Style</label>
+              <select class="select" id="style-select">
+                <option value="Occupation">Occupation</option>
+                <option value="Cooperative">Cooperative</option>
+                <option value="Invasion">Invasion</option>
+              </select>
+            </div>
+          </div>
+          <div class="panel-card">
+            <h2 class="panel-heading">Map list</h2>
+            <div class="map-list-toolbar">
+              <button type="button" class="btn btn-sm" id="map-add">Add</button>
+              <button type="button" class="btn btn-sm" id="map-remove">Remove</button>
+              <button type="button" class="btn btn-sm" id="map-up">Up</button>
+              <button type="button" class="btn btn-sm" id="map-down">Down</button>
+            </div>
+            <ul class="map-list" id="map-list" role="listbox"></ul>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="panel-general" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">Options</h2>
+            <div class="form-grid">
+              <div class="form-row">
+                <label>Max clients</label>
+                <input type="number" class="input input-num" id="max-clients" min="1" max="64" value="64">
+              </div>
+              <div class="form-row">
+                <label>Point limit</label>
+                <input type="number" class="input input-num" id="point-limit" min="0" value="0">
+              </div>
+              <div class="form-row">
+                <label>Round limit</label>
+                <input type="number" class="input input-num" id="round-limit" min="0" value="25">
+              </div>
+              <div class="form-row">
+                <label>Respawn time (s)</label>
+                <input type="number" class="input input-num" id="respawn-time" min="0" value="20">
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="friendly-fire" checked> Friendly fire
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-team-balance"> Auto team balance
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="panel-coop" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">Coop</h2>
+            <div class="form-row">
+              <label>Difficulty</label>
+              <select class="select" id="difficulty">
+                <option value="Easy">Easy</option>
+                <option value="Normal">Normal</option>
+                <option value="Hard" selected>Hard</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="panel-advanced" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">Advanced</h2>
+            <div class="form-row">
+              <label>Password</label>
+              <input type="password" class="input" id="password" placeholder="Server password">
+            </div>
+            <div class="form-row">
+              <label>Admin password</label>
+              <input type="password" class="input" id="admin-pass" placeholder="Admin password">
+            </div>
+            <div class="form-row">
+              <label>Max ping</label>
+              <input type="number" class="input input-num" id="max-ping" min="0" value="0">
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
