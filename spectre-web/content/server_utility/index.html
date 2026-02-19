@@ -121,7 +121,7 @@
 
         <section class="tab-panel hidden" id="panel-general" role="tabpanel">
           <div class="panel-card">
-            <h2 class="panel-heading">Options</h2>
+            <h2 class="panel-heading">General</h2>
             <div class="form-grid">
               <div class="form-row">
                 <label>Max clients</label>
@@ -136,8 +136,24 @@
                 <input type="number" class="input input-num" id="round-limit" min="0" value="25">
               </div>
               <div class="form-row">
+                <label>Round count</label>
+                <input type="number" class="input input-num" id="round-count" min="1" max="20" value="1">
+              </div>
+              <div class="form-row">
                 <label>Respawn time (s)</label>
                 <input type="number" class="input input-num" id="respawn-time" min="0" value="20">
+              </div>
+              <div class="form-row">
+                <label>Spawn protection (s)</label>
+                <input type="number" class="input input-num" id="spawn-protection" min="0" max="30" value="0">
+              </div>
+              <div class="form-row">
+                <label>Warmup (s)</label>
+                <input type="number" class="input input-num" id="warmup" min="0" max="60" value="10">
+              </div>
+              <div class="form-row">
+                <label>Inverse damage (%)</label>
+                <input type="number" class="input input-num" id="inverse-damage" min="0" max="200" value="0">
               </div>
               <div class="form-row">
                 <label class="checkbox-label">
@@ -149,6 +165,31 @@
                   <input type="checkbox" id="auto-team-balance"> Auto team balance
                 </label>
               </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="third-person-view"> Allow 3rd person view
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="allow-crosshair" checked> Allow crosshair
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="falling-dmg" checked> Falling damage
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="allow-respawn" checked> Allow respawn
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="allow-vehicles" checked> Allow vehicles
+                </label>
+              </div>
             </div>
           </div>
         </section>
@@ -156,13 +197,25 @@
         <section class="tab-panel hidden" id="panel-coop" role="tabpanel">
           <div class="panel-card">
             <h2 class="panel-heading">Coop</h2>
-            <div class="form-row">
-              <label>Difficulty</label>
-              <select class="select" id="difficulty">
-                <option value="Easy">Easy</option>
-                <option value="Normal">Normal</option>
-                <option value="Hard" selected>Hard</option>
-              </select>
+            <div class="form-grid">
+              <div class="form-row">
+                <label>Difficulty</label>
+                <select class="select" id="difficulty">
+                  <option value="Easy">Easy</option>
+                  <option value="Normal">Normal</option>
+                  <option value="Hard" selected>Hard</option>
+                  <option value="Very hard">Very hard</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label>Respawn number (0 = no limit)</label>
+                <input type="number" class="input input-num" id="respawn-number" min="0" max="99" value="1">
+              </div>
+              <div class="form-row form-row-full">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="team-respawn" checked> Team respawn
+                </label>
+              </div>
             </div>
           </div>
         </section>
@@ -170,17 +223,40 @@
         <section class="tab-panel hidden" id="panel-advanced" role="tabpanel">
           <div class="panel-card">
             <h2 class="panel-heading">Advanced</h2>
-            <div class="form-row">
-              <label>Password</label>
-              <input type="password" class="input" id="password" placeholder="Server password">
-            </div>
-            <div class="form-row">
-              <label>Admin password</label>
-              <input type="password" class="input" id="admin-pass" placeholder="Admin password">
-            </div>
-            <div class="form-row">
-              <label>Max ping</label>
-              <input type="number" class="input input-num" id="max-ping" min="0" value="0">
+            <div class="form-grid">
+              <div class="form-row">
+                <label>Password</label>
+                <input type="password" class="input" id="password" placeholder="Server password">
+              </div>
+              <div class="form-row">
+                <label>Admin password</label>
+                <input type="password" class="input" id="admin-pass" placeholder="Admin password">
+              </div>
+              <div class="form-row">
+                <label>Max ping</label>
+                <input type="number" class="input input-num" id="max-ping" min="0" value="0">
+              </div>
+              <div class="form-row">
+                <label>Max frequency</label>
+                <input type="number" class="input input-num" id="max-freq" min="0" value="0">
+              </div>
+              <div class="form-row">
+                <label>Max inactivity (s)</label>
+                <input type="number" class="input input-num" id="max-inactivity" min="0" value="0">
+              </div>
+              <div class="form-row form-row-with-notice">
+                <p class="form-notice form-notice-info">Not in use</p>
+                <label>Voice chat</label>
+                <select class="select" id="voice-chat" disabled aria-label="Voice chat (not in use)">
+                  <option value="0" selected>Not used</option>
+                  <option value="1">Codec 1.2 kbps</option>
+                  <option value="2">Codec 3.2 kbps</option>
+                  <option value="3">Codec 6.4 kbps</option>
+                  <option value="4">Codec 8.0 kbps</option>
+                  <option value="5">Codec 13.0 kbps</option>
+                  <option value="6">Codec 32.0 kbps</option>
+                </select>
+              </div>
             </div>
           </div>
         </section>

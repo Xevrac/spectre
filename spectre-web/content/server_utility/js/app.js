@@ -22,13 +22,27 @@
             max_clients: 64,
             point_limit: 0,
             round_limit: 25,
+            round_count: 1,
             respawn_time: 20,
+            spawn_protection: 0,
+            warmup: 10,
+            inverse_damage: 0,
             friendly_fire: true,
             auto_team_balance: false,
+            third_person_view: false,
+            allow_crosshair: true,
+            falling_dmg: true,
+            allow_respawn: true,
+            allow_vehicles: true,
             difficulty: 'Hard',
+            respawn_number: 1,
+            team_respawn: true,
             password: '',
             admin_pass: '',
             max_ping: 0,
+            max_freq: 0,
+            max_inactivity: 0,
+            voice_chat: 0,
             maps: ['map_01', 'map_02']
           }
         ]
@@ -148,13 +162,27 @@
     set('max-clients', c.max_clients);
     set('point-limit', c.point_limit);
     set('round-limit', c.round_limit);
+    set('round-count', c.round_count != null ? c.round_count : 1);
     set('respawn-time', c.respawn_time);
+    set('spawn-protection', c.spawn_protection != null ? c.spawn_protection : 0);
+    set('warmup', c.warmup != null ? c.warmup : 10);
+    set('inverse-damage', c.inverse_damage != null ? c.inverse_damage : 0);
     setCheck('friendly-fire', c.friendly_fire);
     setCheck('auto-team-balance', c.auto_team_balance);
+    setCheck('third-person-view', c.third_person_view);
+    setCheck('allow-crosshair', c.allow_crosshair != null ? c.allow_crosshair : true);
+    setCheck('falling-dmg', c.falling_dmg != null ? c.falling_dmg : true);
+    setCheck('allow-respawn', c.allow_respawn != null ? c.allow_respawn : true);
+    setCheck('allow-vehicles', c.allow_vehicles != null ? c.allow_vehicles : true);
     set('difficulty', c.difficulty);
+    set('respawn-number', c.respawn_number != null ? c.respawn_number : 1);
+    setCheck('team-respawn', c.team_respawn != null ? c.team_respawn : true);
     set('password', c.password);
     set('admin-pass', c.admin_pass);
     set('max-ping', c.max_ping);
+    set('max-freq', c.max_freq != null ? c.max_freq : 0);
+    set('max-inactivity', c.max_inactivity != null ? c.max_inactivity : 0);
+    set('voice-chat', c.voice_chat != null ? String(c.voice_chat) : '0');
   }
 
   function bindConfigToForm() {
@@ -177,13 +205,35 @@
     c.max_clients = parseInt(get('max-clients'), 10) || 64;
     c.point_limit = parseInt(get('point-limit'), 10) || 0;
     c.round_limit = parseInt(get('round-limit'), 10) || 25;
+    c.round_count = parseInt(get('round-count'), 10);
+    if (isNaN(c.round_count) || c.round_count < 1) c.round_count = 1;
+    if (c.round_count > 20) c.round_count = 20;
     c.respawn_time = parseInt(get('respawn-time'), 10) || 20;
+    c.spawn_protection = parseInt(get('spawn-protection'), 10) || 0;
+    if (c.spawn_protection > 30) c.spawn_protection = 30;
+    c.warmup = parseInt(get('warmup'), 10) || 0;
+    if (c.warmup > 60) c.warmup = 60;
+    c.inverse_damage = parseInt(get('inverse-damage'), 10) || 0;
+    if (c.inverse_damage > 200) c.inverse_damage = 200;
     c.friendly_fire = getCheck('friendly-fire');
     c.auto_team_balance = getCheck('auto-team-balance');
+    c.third_person_view = getCheck('third-person-view');
+    c.allow_crosshair = getCheck('allow-crosshair');
+    c.falling_dmg = getCheck('falling-dmg');
+    c.allow_respawn = getCheck('allow-respawn');
+    c.allow_vehicles = getCheck('allow-vehicles');
     c.difficulty = get('difficulty');
+    c.respawn_number = parseInt(get('respawn-number'), 10);
+    if (isNaN(c.respawn_number) || c.respawn_number < 0) c.respawn_number = 0;
+    if (c.respawn_number > 99) c.respawn_number = 99;
+    c.team_respawn = getCheck('team-respawn');
     c.password = get('password');
     c.admin_pass = get('admin-pass');
     c.max_ping = parseInt(get('max-ping'), 10) || 0;
+    c.max_freq = parseInt(get('max-freq'), 10) || 0;
+    c.max_inactivity = parseInt(get('max-inactivity'), 10) || 0;
+    c.voice_chat = parseInt(get('voice-chat'), 10) || 0;
+    if (c.voice_chat > 6) c.voice_chat = 6;
   }
 
   let selectedMapIndex = -1;
@@ -305,7 +355,7 @@
     ipcLog('Profile New clicked', s ? 'server=' + s.name : 'no server');
     if (s) {
       const last = s.configs[s.configs.length - 1];
-      const base = last ? { ...last } : { name: 'New profile', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, respawn_time: 20, friendly_fire: true, auto_team_balance: false, difficulty: 'Hard', password: '', admin_pass: '', max_ping: 0, maps: [] };
+      const base = last ? { ...last } : { name: 'New profile', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, round_count: 1, respawn_time: 20, spawn_protection: 0, warmup: 10, inverse_damage: 0, friendly_fire: true, auto_team_balance: false, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: true, allow_vehicles: true, difficulty: 'Hard', respawn_number: 1, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 0, max_inactivity: 0, voice_chat: 0, maps: [] };
       s.configs.push({ ...base, name: 'New profile', maps: Array.isArray(base.maps) ? base.maps.slice() : [] });
       state.selectedConfigIndex = s.configs.length - 1;
       render();
@@ -344,7 +394,7 @@
       use_sabre_squadron: true,
       current_config: 'Default',
       configs: [
-        { name: 'Default', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, respawn_time: 20, friendly_fire: true, auto_team_balance: false, difficulty: 'Hard', password: '', admin_pass: '', max_ping: 0, maps: [] }
+        { name: 'Default', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, round_count: 1, respawn_time: 20, spawn_protection: 0, warmup: 10, inverse_damage: 0, friendly_fire: true, auto_team_balance: false, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: true, allow_vehicles: true, difficulty: 'Hard', respawn_number: 1, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 0, max_inactivity: 0, voice_chat: 0, maps: [] }
       ]
     };
     state.servers.push(newServer);
