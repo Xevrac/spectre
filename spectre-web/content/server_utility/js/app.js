@@ -6,18 +6,18 @@
 (function () {
   'use strict';
 
-  // Mock state (mirrors ServerLauncherData / Server / ServerConfig from spectre-core)
   const state = {
     servers: [
       {
         name: 'Server 1',
         port: 22000,
-        use_sabre_squadron: false,
+        use_sabre_squadron: true,
         current_config: 'Default',
         configs: [
           {
             name: 'Default',
-            session_name: 'H&D 2 SERVER',
+            domain: 'Internet',
+            session_name: 'A Spectre Session',
             style: 'Occupation',
             max_clients: 64,
             point_limit: 0,
@@ -36,8 +36,35 @@
     ],
     selectedServerIndex: 0,
     selectedConfigIndex: 0,
-    activeTab: 'maps'
+    activeTab: 'maps',
+    /** Maps from mpmaplist.txt by style: { Occupation: [...], Cooperative: [...], ... } */
+    availableMapsByStyle: {}
   };
+
+  function ipcLog(msg, detail) {
+    console.log('[IPC JS] ' + msg, detail !== undefined ? detail : '');
+  }
+  if (typeof window !== 'undefined' && window.__spectreInitialState) {
+    try {
+      const initial = window.__spectreInitialState;
+      if (initial.servers && Array.isArray(initial.servers) && initial.servers.length > 0) {
+        state.servers = initial.servers;
+        ipcLog('Initial state applied', state.servers.length + ' servers');
+      } else {
+        ipcLog('Initial state had no servers, keeping default');
+      }
+      if (typeof initial.selectedServerIndex === 'number') state.selectedServerIndex = Math.min(initial.selectedServerIndex, state.servers.length - 1);
+      if (typeof initial.selectedConfigIndex === 'number') state.selectedConfigIndex = Math.min(initial.selectedConfigIndex, (state.servers[state.selectedServerIndex]?.configs?.length || 1) - 1);
+      if (initial.availableMapsByStyle && typeof initial.availableMapsByStyle === 'object') {
+        state.availableMapsByStyle = initial.availableMapsByStyle;
+      }
+      delete window.__spectreInitialState;
+    } catch (e) {
+      console.warn('[IPC JS] Failed to apply __spectreInitialState:', e);
+    }
+  } else {
+    ipcLog('No __spectreInitialState, using built-in default');
+  }
 
   function getSelectedServer() {
     return state.servers[state.selectedServerIndex] || null;
@@ -106,14 +133,18 @@
     if (!c) return;
     const set = (id, value) => {
       const el = document.getElementById(id);
-      if (el) el.value = value;
+      if (el) el.value = value != null ? value : '';
     };
     const setCheck = (id, value) => {
       const el = document.getElementById(id);
       if (el) el.checked = !!value;
     };
+    set('profile-name', c.name);
     set('session-name', c.session_name);
     set('style-select', c.style);
+    const domain = (c.domain === 'LAN') ? 'LAN' : 'Internet';
+    const domainEl = document.getElementById('domain-' + domain.toLowerCase());
+    if (domainEl) domainEl.checked = true;
     set('max-clients', c.max_clients);
     set('point-limit', c.point_limit);
     set('round-limit', c.round_limit);
@@ -137,8 +168,12 @@
       const el = document.getElementById(id);
       return el ? el.checked : false;
     };
+    const name = get('profile-name').trim();
+    if (name) c.name = name;
     c.session_name = get('session-name');
     c.style = get('style-select');
+    const domainRadio = document.querySelector('input[name="domain-type"]:checked');
+    c.domain = domainRadio ? domainRadio.value : 'Internet';
     c.max_clients = parseInt(get('max-clients'), 10) || 64;
     c.point_limit = parseInt(get('point-limit'), 10) || 0;
     c.round_limit = parseInt(get('round-limit'), 10) || 25;
@@ -151,24 +186,88 @@
     c.max_ping = parseInt(get('max-ping'), 10) || 0;
   }
 
+  let selectedMapIndex = -1;
+  let selectedAvailableMapIndex = -1;
+
+  /** Pool of map names for the current config's style (from mpmaplist). */
+  function getPoolForCurrentStyle() {
+    const c = getSelectedConfig();
+    const style = c ? (c.style || 'Occupation') : 'Occupation';
+    let arr = state.availableMapsByStyle[style];
+    if (!Array.isArray(arr) || arr.length === 0) {
+      if (style === 'Invasion') arr = state.availableMapsByStyle['Occupation'];
+      else if (style === 'Objectives') arr = state.availableMapsByStyle['Objectives'];
+    }
+    return Array.isArray(arr) ? arr : [];
+  }
+
+  /** Maps that can be added: in pool for current style but not already in rotation. */
+  function getAvailableMapsForRotation() {
+    const c = getSelectedConfig();
+    const rotation = c && c.maps ? c.maps : [];
+    const pool = getPoolForCurrentStyle();
+    return pool.filter(function (name) { return rotation.indexOf(name) === -1; });
+  }
+
+  function renderAvailableMapList() {
+    const ul = document.getElementById('available-map-list');
+    if (!ul) return;
+    const available = getAvailableMapsForRotation();
+    if (selectedAvailableMapIndex >= available.length) selectedAvailableMapIndex = -1;
+    if (available.length === 0) {
+      ul.innerHTML = '<li class="empty-hint">No maps to add. Set mpmaplist path or add from rotation.</li>';
+      selectedAvailableMapIndex = -1;
+      return;
+    }
+    ul.innerHTML = available.map(function (name, i) {
+      return '<li class="' + (i === selectedAvailableMapIndex ? 'selected' : '') + '" data-index="' + i + '">' + escapeHtml(name) + '</li>';
+    }).join('');
+    ul.querySelectorAll('li[data-index]').forEach(function (li) {
+      li.addEventListener('click', function () {
+        selectedAvailableMapIndex = parseInt(this.dataset.index, 10);
+        renderAvailableMapList();
+      });
+    });
+  }
+
   function renderMapList() {
     const ul = document.getElementById('map-list');
     if (!ul) return;
     const c = getSelectedConfig();
-    const maps = c ? c.maps : [];
-    ul.innerHTML = maps.length === 0
-      ? '<li class="empty-hint">No maps. Add maps above.</li>'
-      : maps.map((m, i) => `<li class="selected" data-index="${i}">${escapeHtml(m)}</li>`).join('');
+    const maps = c ? (c.maps || []) : [];
+    if (selectedMapIndex >= maps.length) selectedMapIndex = -1;
+    if (maps.length === 0) {
+      ul.innerHTML = '<li class="empty-hint">No maps in rotation. Add from available list.</li>';
+      selectedMapIndex = -1;
+      return;
+    }
+    ul.innerHTML = maps.map((m, i) =>
+      `<li class="${i === selectedMapIndex ? 'selected' : ''}" data-index="${i}">${escapeHtml(m)}</li>`
+    ).join('');
+    ul.querySelectorAll('li[data-index]').forEach(li => {
+      li.addEventListener('click', function () {
+        selectedMapIndex = parseInt(this.dataset.index, 10);
+        renderMapList();
+      });
+    });
   }
 
   function render() {
+    // Each server's display name = its current profile name (dropdown shows profile names)
+    state.servers.forEach(function (srv) {
+      const cur = srv.configs && srv.configs.find(function (cfg) { return cfg.name === srv.current_config; });
+      if (cur) srv.name = cur.name;
+    });
+    const s = getSelectedServer();
+    const c = getSelectedConfig();
+    if (s && c) s.name = c.name;
     renderServerSelect();
     renderProfileList();
     renderTabs();
     bindFormToConfig();
+    renderAvailableMapList();
     renderMapList();
     const gameSelect = document.getElementById('game-select');
-    const s = getSelectedServer();
     if (gameSelect && s) gameSelect.value = s.use_sabre_squadron ? 'sabre' : 'hd2';
   }
 
@@ -187,13 +286,30 @@
     };
   }
 
-  // Profile actions (placeholders)
+  // Profile name: sync input -> config, refresh list and server dropdown (server name = profile name)
+  const profileNameEl = document.getElementById('profile-name');
+  if (profileNameEl) {
+    profileNameEl.addEventListener('input', function () {
+      bindConfigToForm();
+      renderProfileList();
+      const s = getSelectedServer();
+      const c = getSelectedConfig();
+      if (s && c) s.name = c.name;
+      renderServerSelect();
+    });
+  }
+
+  // Profile actions
   document.getElementById('profile-new')?.addEventListener('click', function () {
     const s = getSelectedServer();
+    ipcLog('Profile New clicked', s ? 'server=' + s.name : 'no server');
     if (s) {
-      s.configs.push({ ...s.configs[s.configs.length - 1] || {}, name: 'New profile', maps: [] });
+      const last = s.configs[s.configs.length - 1];
+      const base = last ? { ...last } : { name: 'New profile', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, respawn_time: 20, friendly_fire: true, auto_team_balance: false, difficulty: 'Hard', password: '', admin_pass: '', max_ping: 0, maps: [] };
+      s.configs.push({ ...base, name: 'New profile', maps: Array.isArray(base.maps) ? base.maps.slice() : [] });
       state.selectedConfigIndex = s.configs.length - 1;
       render();
+      ipcLog('Profile added', 'total configs=' + s.configs.length);
     }
   });
   document.getElementById('profile-delete')?.addEventListener('click', function () {
@@ -215,27 +331,152 @@
     }
   });
 
+  document.getElementById('server-add')?.addEventListener('click', function () {
+    bindConfigToForm();
+    const nextPort = 22000 + state.servers.length;
+    const newServer = {
+      name: 'New profile',
+      running: false,
+      watchdog: false,
+      messages: false,
+      users: [],
+      port: nextPort,
+      use_sabre_squadron: true,
+      current_config: 'Default',
+      configs: [
+        { name: 'Default', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, respawn_time: 20, friendly_fire: true, auto_team_balance: false, difficulty: 'Hard', password: '', admin_pass: '', max_ping: 0, maps: [] }
+      ]
+    };
+    state.servers.push(newServer);
+    state.selectedServerIndex = state.servers.length - 1;
+    state.selectedConfigIndex = 0;
+    render();
+    ipcLog('Server added', 'total servers=' + state.servers.length);
+  });
+
   document.getElementById('edit-server')?.addEventListener('click', function () {
-    // TODO: open edit server dialog / bridge to Rust
+    const s = getSelectedServer();
+    if (!s) return;
+    const portEl = document.getElementById('edit-server-port');
+    const dialog = document.getElementById('edit-server-dialog');
+    if (portEl && dialog) {
+      portEl.value = s.port || 22000;
+      dialog.showModal();
+    }
+  });
+
+  document.getElementById('edit-server-dialog')?.addEventListener('submit', function (e) {
+    e.preventDefault();
+    const s = getSelectedServer();
+    const portEl = document.getElementById('edit-server-port');
+    const dialog = document.getElementById('edit-server-dialog');
+    if (s && portEl && dialog) {
+      const port = parseInt(portEl.value, 10);
+      if (port >= 1 && port <= 65535) s.port = port;
+      dialog.close();
+      renderServerSelect();
+    }
+  });
+
+  document.getElementById('edit-server-cancel')?.addEventListener('click', function () {
+    document.getElementById('edit-server-dialog')?.close();
   });
 
   document.getElementById('save-config')?.addEventListener('click', function () {
     bindConfigToForm();
-    // TODO: bridge to Rust — save config file
-    console.log('Save Configuration (bridge not wired)');
+    const payload = JSON.stringify({ action: 'save', servers: state.servers });
+    ipcLog('Save clicked', 'ipc.postMessage body=' + payload.length + ' bytes');
+    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+      try {
+        window.ipc.postMessage(payload);
+        showSaveStatus('Saving…');
+        // Result is reported via window.__spectreIpcStatus() from Rust after save completes.
+      } catch (err) {
+        ipcLog('Save postMessage error', err);
+        showSaveStatus('Save failed.');
+        if (window.__spectreIpcStatus) window.__spectreIpcStatus('Save error: ' + (err && err.message ? err.message : 'postMessage'));
+      }
+    } else {
+      ipcLog('Save skipped', 'window.ipc.postMessage not available');
+      showSaveStatus('Save not available.');
+      if (window.__spectreIpcStatus) window.__spectreIpcStatus('IPC not available');
+    }
   });
+
+  function showSaveStatus(msg) {
+    var el = document.getElementById('save-config');
+    if (!el) return;
+    var orig = el.textContent;
+    el.textContent = msg;
+    setTimeout(function () { el.textContent = orig; }, 2000);
+  }
 
   document.getElementById('start-server')?.addEventListener('click', function () {
     bindConfigToForm();
-    // TODO: bridge to Rust — start server process
+    // TODO: bridge to Rust — start server process for selected server
     console.log('Start Server (bridge not wired)');
   });
 
-  // Map toolbar placeholders
-  ['map-add', 'map-remove', 'map-up', 'map-down'].forEach(id => {
-    document.getElementById(id)?.addEventListener('click', function () {
-      console.log(id + ' (bridge not wired)');
-    });
+  document.getElementById('start-all-servers')?.addEventListener('click', function () {
+    bindConfigToForm();
+    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+      try {
+        const payload = JSON.stringify({ action: 'start_all', servers: state.servers });
+        window.ipc.postMessage(payload);
+        ipcLog('Start All Servers', state.servers.length + ' servers');
+      } catch (err) {
+        ipcLog('Start All postMessage error', err);
+      }
+    } else {
+      ipcLog('Start All Servers (bridge not wired)', state.servers.length);
+    }
+  });
+
+  document.getElementById('map-add')?.addEventListener('click', function () {
+    const c = getSelectedConfig();
+    if (!c) return;
+    const available = getAvailableMapsForRotation();
+    if (selectedAvailableMapIndex < 0 || selectedAvailableMapIndex >= available.length) return;
+    const name = available[selectedAvailableMapIndex];
+    c.maps = c.maps || [];
+    c.maps.push(name);
+    selectedMapIndex = c.maps.length - 1;
+    selectedAvailableMapIndex = -1;
+    renderAvailableMapList();
+    renderMapList();
+  });
+  document.getElementById('map-remove')?.addEventListener('click', function () {
+    const c = getSelectedConfig();
+    if (!c || !c.maps || selectedMapIndex < 0 || selectedMapIndex >= c.maps.length) return;
+    c.maps.splice(selectedMapIndex, 1);
+    selectedMapIndex = Math.min(selectedMapIndex, c.maps.length - 1);
+    if (c.maps.length === 0) selectedMapIndex = -1;
+    renderAvailableMapList();
+    renderMapList();
+  });
+  document.getElementById('map-up')?.addEventListener('click', function () {
+    const c = getSelectedConfig();
+    if (!c || !c.maps || selectedMapIndex <= 0) return;
+    const arr = c.maps;
+    [arr[selectedMapIndex - 1], arr[selectedMapIndex]] = [arr[selectedMapIndex], arr[selectedMapIndex - 1]];
+    selectedMapIndex--;
+    renderMapList();
+  });
+  document.getElementById('map-down')?.addEventListener('click', function () {
+    const c = getSelectedConfig();
+    if (!c || !c.maps || selectedMapIndex < 0 || selectedMapIndex >= c.maps.length - 1) return;
+    const arr = c.maps;
+    [arr[selectedMapIndex], arr[selectedMapIndex + 1]] = [arr[selectedMapIndex + 1], arr[selectedMapIndex]];
+    selectedMapIndex++;
+    renderMapList();
+  });
+
+  document.getElementById('style-select')?.addEventListener('change', function () {
+    bindConfigToForm();
+    // Reset map rotation when style changes; previous maps may be from a different game mode
+    const c = getSelectedConfig();
+    if (c) c.maps = [];
+    render();
   });
 
   // Sync form -> state when switching tabs/config
@@ -247,5 +488,12 @@
     };
   });
 
+  window.__spectreIpcStatus = function (msg) {
+    var el = document.getElementById('ipc-debug');
+    if (el) el.textContent = 'IPC: ' + (msg || '');
+    if (msg === 'Saved OK') showSaveStatus('Saved');
+    else if (msg && msg.indexOf('Save') !== -1) showSaveStatus('Save failed');
+  };
   render();
+  ipcLog('Ready');
 })();

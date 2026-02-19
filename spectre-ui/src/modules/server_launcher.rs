@@ -12,8 +12,8 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::Instant;
 
-const CONFIGS_DIR: &str = "Dedicated/Server/Configs";
-const CONFIG_FILENAME: &str = "hd2_server_config.txt";
+const CONFIGS_DIR: &str = "content/server_utility";
+const CONFIG_FILENAME: &str = "hd2_server_config.json";
 
 /// Step 0 = prerequisites (DirectPlay + registry); steps 1–3 = path selection.
 const WIZARD_STEPS: usize = 4;
@@ -104,7 +104,7 @@ impl Default for ServerLauncher {
             server.port = 22000;
             let mut default_config = ServerConfig::default();
             default_config.name = "Default".to_string();
-            default_config.session_name = "H&D 2 SERVER".to_string();
+            default_config.session_name = "A Spectre Session".to_string();
             default_config.style = "Occupation".to_string();
             server.current_config = default_config.name.clone();
             server.configs.push(default_config);

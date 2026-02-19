@@ -17,6 +17,10 @@
       <section class="sidebar-section" id="server-section">
         <label class="sidebar-label">Server</label>
         <select class="select" id="server-select" aria-label="Select server"></select>
+        <div class="server-section-actions">
+          <button type="button" class="btn btn-sm" id="server-add">Add</button>
+          <button type="button" class="btn btn-sm" id="edit-server">Edit</button>
+        </div>
       </section>
 
       <section class="sidebar-section">
@@ -32,14 +36,14 @@
       <section class="sidebar-section">
         <label class="sidebar-label">Game</label>
         <select class="select" id="game-select" aria-label="Game executable">
-          <option value="hd2">HD2</option>
-          <option value="sabre">HD2 Sabre Squadron</option>
+          <option value="hd2">Hidden &amp; Dangerous 2</option>
+          <option value="sabre">H&amp;D2: Sabre Squadron</option>
         </select>
-        <button type="button" class="btn btn-sm" id="edit-server">Edit server…</button>
       </section>
 
       <div class="sidebar-spacer"></div>
       <button type="button" class="btn btn-start" id="start-server">Start Server</button>
+      <button type="button" class="btn btn-sm" id="start-all-servers">Start All Servers</button>
     </aside>
 
     <main class="content">
@@ -55,8 +59,12 @@
           <div class="panel-card">
             <h2 class="panel-heading">Session &amp; game</h2>
             <div class="form-row">
-              <label>Session name</label>
-              <input type="text" class="input" id="session-name" placeholder="HD2 Server">
+              <label>Profile name</label>
+              <input type="text" class="input" id="profile-name" placeholder="Profile name">
+            </div>
+            <div class="form-row">
+              <label>Session name (shown in-game)</label>
+              <input type="text" class="input" id="session-name" placeholder="A Spectre Session">
             </div>
             <div class="form-row">
               <label>Style</label>
@@ -64,18 +72,50 @@
                 <option value="Occupation">Occupation</option>
                 <option value="Cooperative">Cooperative</option>
                 <option value="Invasion">Invasion</option>
+                <option value="Objectives">Objectives</option>
               </select>
+            </div>
+            <div class="form-row">
+              <label>Domain</label>
+              <div class="radio-group" role="radiogroup" aria-label="Domain type">
+                <label class="radio-label">
+                  <input type="radio" name="domain-type" value="Internet" id="domain-internet">
+                  Internet
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="domain-type" value="LAN" id="domain-lan">
+                  LAN
+                </label>
+              </div>
             </div>
           </div>
           <div class="panel-card">
-            <h2 class="panel-heading">Map list</h2>
-            <div class="map-list-toolbar">
-              <button type="button" class="btn btn-sm" id="map-add">Add</button>
-              <button type="button" class="btn btn-sm" id="map-remove">Remove</button>
-              <button type="button" class="btn btn-sm" id="map-up">Up</button>
-              <button type="button" class="btn btn-sm" id="map-down">Down</button>
+            <h2 class="panel-heading">Map rotation</h2>
+            <p class="map-hint">Maps come from <code>mpmaplist.txt</code>. Add maps from the available pool into the rotation or remove them.</p>
+            <div class="map-lists-row">
+              <div class="map-list-box">
+                <label class="map-list-label">Available (from mpmaplist)</label>
+                <ul class="map-list" id="available-map-list" role="listbox" aria-label="Available maps"></ul>
+              </div>
+              <div class="map-list-actions">
+                <button type="button" class="btn btn-sm" id="map-add" title="Add selected map to rotation">Add →</button>
+                <button type="button" class="btn btn-sm" id="map-remove" title="Remove from rotation">← Remove</button>
+              </div>
+              <div class="map-list-box">
+                <label class="map-list-label">Rotation</label>
+                <div class="map-list-with-order">
+                  <ul class="map-list" id="map-list" role="listbox" aria-label="Map rotation"></ul>
+                  <div class="map-order-buttons" aria-label="Reorder rotation">
+                    <button type="button" class="btn btn-icon" id="map-up" title="Move up">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6"/></svg>
+                    </button>
+                    <button type="button" class="btn btn-icon" id="map-down" title="Move down">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <ul class="map-list" id="map-list" role="listbox"></ul>
           </div>
         </section>
 
@@ -147,6 +187,20 @@
       </div>
     </main>
   </div>
+
+  <dialog id="edit-server-dialog" class="edit-server-dialog" aria-label="Edit Server">
+    <form method="dialog">
+      <h3 class="dialog-title">Edit Server</h3>
+      <div class="form-row">
+        <label for="edit-server-port">Port</label>
+        <input type="number" class="input input-num" id="edit-server-port" min="1" max="65535" value="22000" aria-label="Server port">
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" class="btn btn-primary" id="edit-server-save">Save</button>
+        <button type="button" class="btn btn-sm" id="edit-server-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="js/app.js"></script>
 </body>

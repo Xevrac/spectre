@@ -16,11 +16,48 @@ use modules::{
 };
 use splash::SplashScreen;
 use std::path::Path;
+use std::sync::mpsc;
 use std::sync::Arc;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = "Xevrac";
 const ABOUT: &str = "Spectre is a toolkit for Hidden & Dangerous 2, providing various editing and management tools for the game.";
+
+#[cfg(windows)]
+#[derive(serde::Deserialize)]
+struct IpcSaveMessage {
+    action: String,
+    servers: Vec<spectre_core::server::Server>,
+}
+
+/// Path to hd2_server_config.json next to the executable so it works when run from file explorer.
+#[cfg(windows)]
+fn server_utility_config_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::PathBuf::from))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("content")
+        .join("server_utility")
+        .join("hd2_server_config.json")
+}
+
+#[cfg(windows)]
+fn ensure_server_utility_has_defaults(data: &mut spectre_core::server::ServerLauncherData) {
+    use spectre_core::server::{Server, ServerConfig};
+    if data.servers.is_empty() {
+        let mut server = Server::default();
+        server.name = "Server 1".to_string();
+        server.port = 22000;
+        let mut default_config = ServerConfig::default();
+        default_config.name = "Default".to_string();
+        default_config.session_name = "A Spectre Session".to_string();
+        default_config.style = "Occupation".to_string();
+        server.current_config = default_config.name.clone();
+        server.configs.push(default_config);
+        data.servers.push(server);
+    }
+}
 
 const CREDITS: &[&str] = &[
     "Xevrac - Spectre",
@@ -87,6 +124,8 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
         "home" => include_bytes!("../icons/home.svg"),
         "settings" => include_bytes!("../icons/settings.svg"),
         "info" => include_bytes!("../icons/info.svg"),
+        "console" => include_bytes!("../icons/console.svg"),
+        "refresh" => include_bytes!("../icons/refresh.svg"),
         _ => return None,
     };
     
@@ -302,6 +341,12 @@ struct SpectreApp {
     /// Fade opacity for WebView when modal opens/closes (0 = transparent, 1 = opaque).
     #[cfg(windows)]
     webview_fade_alpha: f32,
+    /// Receives save result from IPC handler so we can run evaluate_script to update the page.
+    #[cfg(windows)]
+    ipc_save_rx: Option<mpsc::Receiver<Result<(), String>>>,
+    /// When true, close WebView and reopen server_utility (refresh).
+    #[cfg(windows)]
+    pending_webview_refresh: bool,
     splash_screen: Option<SplashScreen>,
     window_centered: bool,
     center_attempts: u32,
@@ -309,6 +354,9 @@ struct SpectreApp {
     home_icon: Option<TextureHandle>,
     settings_icon: Option<TextureHandle>,
     info_icon: Option<TextureHandle>,
+    refresh_icon: Option<TextureHandle>,
+    #[cfg(debug_assertions)]
+    console_icon: Option<TextureHandle>,
 }
 
 impl SpectreApp {
@@ -326,6 +374,9 @@ impl SpectreApp {
         let home_icon = load_svg_icon(&cc.egui_ctx, "home");
         let settings_icon = load_svg_icon(&cc.egui_ctx, "settings");
         let info_icon = load_svg_icon(&cc.egui_ctx, "info");
+        let refresh_icon = load_svg_icon(&cc.egui_ctx, "refresh");
+        #[cfg(debug_assertions)]
+        let console_icon = load_svg_icon(&cc.egui_ctx, "console");
 
         Self {
             version: VERSION.to_string(),
@@ -340,6 +391,10 @@ impl SpectreApp {
             webview: None,
             #[cfg(windows)]
             webview_fade_alpha: 1.0,
+            #[cfg(windows)]
+            ipc_save_rx: None,
+            #[cfg(windows)]
+            pending_webview_refresh: false,
             splash_screen: Some(splash),
             window_centered: false,
             center_attempts: 0,
@@ -347,6 +402,9 @@ impl SpectreApp {
             home_icon,
             settings_icon,
             info_icon,
+            refresh_icon,
+            #[cfg(debug_assertions)]
+            console_icon,
         }
     }
 
@@ -385,6 +443,7 @@ impl SpectreApp {
     fn show_action_bar(&mut self, ui: &mut egui::Ui, webview_active: bool) {
         const ACTION_BAR_HEIGHT: f32 = 32.0;
         const ACTION_BAR_LEFT_MARGIN: f32 = 6.0;
+        const ACTION_BAR_RIGHT_MARGIN: f32 = 6.0;
         const BTN_W: f32 = 32.0;
         const BTN_H: f32 = 24.0;
         const ICON_SZ: f32 = 14.0;
@@ -460,6 +519,67 @@ impl SpectreApp {
                             egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_info"), |ui| ui.label("About"));
                         }
                     }
+                    // Spacer to push right-side buttons to the end (reserve space for Refresh + optional Dev Tools)
+                    let rest = ui.available_width();
+                    let right_w = if webview_active {
+                        if cfg!(debug_assertions) { BTN_W * 2.0 + BTN_GAP } else { BTN_W }
+                    } else {
+                        0.0
+                    };
+                    if rest > right_w {
+                        ui.add_space(rest - right_w);
+                    }
+                    // Right side: Dev Tools (left) then Refresh (rightmost), with right margin
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_justify(false), |ui| {
+                        ui.add_space(ACTION_BAR_RIGHT_MARGIN);
+                        ui.spacing_mut().item_spacing = egui::vec2(BTN_GAP, 0.0);
+                        // Refresh (when webview active) — rightmost
+                        if webview_active {
+                            let ref_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
+                            let fill = if ref_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
+                            ui.painter().rect_filled(ref_r.rect, 4.0, fill);
+                            if let Some(ref t) = self.refresh_icon {
+                                let r = egui::Rect::from_center_size(ref_r.rect.center(), egui::vec2(ICON_SZ, ICON_SZ));
+                                ui.painter().image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ui.visuals().text_color());
+                            } else {
+                                let galley = ui.painter().layout_no_wrap("↻".to_string(), egui::FontId::new(14.0, egui::FontFamily::Proportional), ui.visuals().text_color());
+                                ui.painter().galley(ref_r.rect.center() - galley.size() / 2.0, galley, ui.visuals().text_color());
+                            }
+                            if ref_r.clicked() {
+                                #[cfg(windows)]
+                                {
+                                    self.pending_webview_refresh = true;
+                                }
+                            }
+                            if ref_r.hovered() {
+                                ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                                ui.label(egui::RichText::new("Refresh").size(12.0).color(ui.visuals().weak_text_color()));
+                            }
+                        }
+                        // Dev Tools (debug only) — left of Refresh
+                        #[cfg(debug_assertions)]
+                        if webview_active {
+                            let dev_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
+                            let fill = if dev_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
+                            ui.painter().rect_filled(dev_r.rect, 4.0, fill);
+                            if let Some(ref t) = self.console_icon {
+                                let r = egui::Rect::from_center_size(dev_r.rect.center(), egui::vec2(ICON_SZ, ICON_SZ));
+                                ui.painter().image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ui.visuals().text_color());
+                            } else {
+                                let galley = ui.painter().layout_no_wrap(">_".to_string(), egui::FontId::new(14.0, egui::FontFamily::Proportional), ui.visuals().text_color());
+                                ui.painter().galley(dev_r.rect.center() - galley.size() / 2.0, galley, ui.visuals().text_color());
+                            }
+                            if dev_r.clicked() {
+                                if let Some(ref wv) = self.webview {
+                                    wv.open_devtools();
+                                }
+                            }
+                            if dev_r.hovered() {
+                                ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                                ui.label(egui::RichText::new("Open DevTools").size(12.0).color(ui.visuals().weak_text_color()));
+                            }
+                        }
+                    });
                 },
             );
             let rect = ui.available_rect_before_wrap();
@@ -976,8 +1096,79 @@ impl eframe::App for SpectreApp {
         }
 
         #[cfg(windows)]
+        {
+            if self.pending_webview_refresh && self.webview.is_some() {
+                self.webview = None;
+                self.pending_webview_card = Some("server_utility".to_string());
+                self.ipc_save_rx = None;
+                self.pending_webview_refresh = false;
+            }
+        }
+        #[cfg(windows)]
         if let Some(card_name) = self.pending_webview_card.take() {
-            if let Ok(html) = spectre_web::embedded_card_html(&card_name) {
+            let initial_json = if card_name == "server_utility" {
+                let config_path = server_utility_config_path();
+                let path_exists = config_path.exists();
+                if path_exists {
+                    println!("[IPC] Server utility load: path={}", config_path.display());
+                } else {
+                    println!("[IPC] Server utility: config file not found at {} (using defaults)", config_path.display());
+                }
+                let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                    .unwrap_or_else(|e| {
+                        println!("[IPC] Load failed (using defaults): {}", e);
+                        spectre_core::server::ServerLauncherData::default()
+                    });
+                ensure_server_utility_has_defaults(&mut data);
+                // When config was missing or empty, use app Settings mpmaplist path so maplist still loads
+                if data.server_manager.mpmaplist_path.is_empty() && !self.config.server_mpmaplist_path.is_empty() {
+                    data.server_manager.mpmaplist_path = self.config.server_mpmaplist_path.clone();
+                }
+                let available_maps = if data.server_manager.mpmaplist_path.is_empty() {
+                    std::collections::HashMap::new()
+                } else {
+                    let path = std::path::Path::new(&data.server_manager.mpmaplist_path);
+                    let resolved = spectre_core::mpmaplist::resolve_mpmaplist_path(path);
+                    let maps = spectre_core::mpmaplist::load_from_path(path);
+                    let total: usize = maps.values().map(|v| v.len()).sum();
+                    if total > 0 {
+                        for (style, list) in &maps {
+                            println!("[IPC] mpmaplist style {}: {} maps", style, list.len());
+                        }
+                        println!("[IPC] mpmaplist total: {} maps from {}", total, resolved.display());
+                    } else if !data.server_manager.mpmaplist_path.is_empty() {
+                        println!("[IPC] mpmaplist: no maps parsed from {} (check path and file format)", resolved.display());
+                    }
+                    maps
+                };
+                match serde_json::to_value(&data) {
+                    Ok(mut value) => {
+                        value["availableMapsByStyle"] = serde_json::to_value(&available_maps).unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        match serde_json::to_string(&value) {
+                            Ok(json) => {
+                                let source = if path_exists { "from file" } else { "defaults" };
+                                println!("[IPC] Initial state: {} servers, {} bytes ({})", data.servers.len(), json.len(), source);
+                                Some(json)
+                            }
+                            Err(e) => {
+                                println!("[IPC] Serialize initial state failed: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("[IPC] Serialize initial state failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let html_result = spectre_web::embedded_card_html(
+                &card_name,
+                initial_json.as_deref(),
+            );
+            if let Ok(html) = html_result {
                 let scale = ctx
                     .input(|i| i.viewport().native_pixels_per_point)
                     .unwrap_or(1.0);
@@ -989,13 +1180,50 @@ impl eframe::App for SpectreApp {
                     width: (screen.width() * scale) as u32,
                     height: ((screen.height() - ACTION_BAR_HEIGHT) * scale).max(1.0) as u32,
                 };
-                if let Ok(wv) = wry::WebViewBuilder::new_as_child(&*frame)
+                let config_path = server_utility_config_path();
+                let (ipc_tx, ipc_rx) = mpsc::channel();
+                let builder = wry::WebViewBuilder::new_as_child(&*frame)
                     .with_bounds(bounds)
-                    .with_html(&html)
-                    .build()
-                {
+                    .with_ipc_handler({
+                        let config_path = config_path.clone();
+                        let ipc_tx = ipc_tx.clone();
+                        move |request: http::Request<String>| {
+                            let body = request.body();
+                            println!("[IPC] postMessage received, body_len={}", body.len());
+                            match serde_json::from_str::<IpcSaveMessage>(body) {
+                                Ok(msg) if msg.action == "save" => {
+                                    println!("[IPC] Save: {} servers", msg.servers.len());
+                                    let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                                        .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
+                                    data.servers = msg.servers;
+                                    if let Some(parent) = config_path.parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    let result = data.save_to_file(&config_path).map_err(|e| e.to_string());
+                                    if result.is_ok() {
+                                        println!("[IPC] Save OK -> {}", config_path.display());
+                                    } else {
+                                        println!("[IPC] Save failed: {:?}", result);
+                                    }
+                                    let _ = ipc_tx.send(result);
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    println!("[IPC] Parse postMessage failed: {}", e);
+                                    let _ = ipc_tx.send(Err(e.to_string()));
+                                }
+                            }
+                        }
+                    })
+                    .with_devtools({
+                        // Only enable DevTools (F12) in debug builds; disabled in release.
+                        cfg!(debug_assertions)
+                    })
+                    .with_html(&html);
+                if let Ok(wv) = builder.build() {
                     self.webview = Some(wv);
                     self.webview_fade_alpha = 1.0;
+                    self.ipc_save_rx = Some(ipc_rx);
                 } else {
                     self.card_launch_error = Some("Failed to create WebView.".to_string());
                 }
@@ -1018,6 +1246,22 @@ impl eframe::App for SpectreApp {
                 height: ((screen.height() - ACTION_BAR_HEIGHT) * scale).max(1.0) as u32,
             };
             let _ = wv.set_bounds(bounds);
+        }
+
+        #[cfg(windows)]
+        if let Some(ref rx) = self.ipc_save_rx {
+            if let Ok(result) = rx.try_recv() {
+                let status_msg = result.as_ref().map_or_else(|e| format!("Save failed: {}", e), |()| "Saved OK".to_string());
+                let script = format!(
+                    "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
+                    serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('Saved OK')".to_string())
+                );
+                if let Some(ref wv) = self.webview {
+                    if let Err(e) = wv.evaluate_script(&script) {
+                        println!("[IPC] evaluate_script status failed: {}", e);
+                    }
+                }
+            }
         }
 
         if !self.window_centered && self.center_attempts < 15 {
@@ -1168,7 +1412,7 @@ impl eframe::App for SpectreApp {
                     ui.add_space(10.0);
 
                     ui.label(egui::RichText::new("Server Utility").size(14.0).strong());
-                    ui.label("Paths used by the Server Utility. Configs are saved in Dedicated/Server/Configs.");
+                    ui.label("Paths used by the Server Utility. Configs are saved in content/server_utility.");
                     let paths_enabled = self.config.server_utility_wizard_completed;
                     if !paths_enabled {
                         ui.colored_label(

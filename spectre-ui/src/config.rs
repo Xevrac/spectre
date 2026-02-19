@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-const CONFIG_FILE: &str = "spectre_config.json";
+const CONFIG_DIR: &str = "content";
+const CONFIG_FILE: &str = "content/spectre_config.json";
 
 /// Returns a stable machine identifier so we can bind directplay_detected to this machine.
 /// On Windows uses HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid; otherwise hostname.
@@ -103,7 +104,7 @@ impl Config {
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            if fs::write(CONFIG_FILE, json).is_ok() {
+            if fs::create_dir_all(CONFIG_DIR).is_ok() && fs::write(CONFIG_FILE, json).is_ok() {
                 println!("[DEBUG] Config saved to {}", CONFIG_FILE);
             } else {
                 println!("[DEBUG] Failed to save config to {}", CONFIG_FILE);

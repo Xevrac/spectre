@@ -28,7 +28,21 @@ const SERVER_UTILITY_HTML: &str = include_str!("../content/server_utility/index.
 const SERVER_UTILITY_CSS: &str = include_str!("../content/server_utility/css/style.css");
 const SERVER_UTILITY_JS: &str = include_str!("../content/server_utility/js/app.js");
 
-fn embed_server_utility() -> String {
+fn embed_server_utility(initial_state_json: Option<&str>) -> String {
+    let initial_script = if let Some(json) = initial_state_json {
+        let escaped = json
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+            .replace("</script>", "<\\/script>");
+        format!(
+            r#"<script>window.__spectreInitialState=JSON.parse("{}");</script>"#,
+            escaped
+        )
+    } else {
+        String::new()
+    };
     SERVER_UTILITY_HTML
         .replace(
             r#"<link rel="stylesheet" href="css/style.css">"#,
@@ -36,22 +50,23 @@ fn embed_server_utility() -> String {
         )
         .replace(
             r#"<script src="js/app.js"></script>"#,
-            &format!("<script>{}</script>", SERVER_UTILITY_JS),
+            &format!("{}<script>{}</script>", initial_script, SERVER_UTILITY_JS),
         )
 }
 
 /// Returns the full inlined HTML for a card by name. Cards live under content/<card_name>/ and are embedded at build time.
 /// Used by spectre-ui to embed the WebView in the main window.
-pub fn embedded_card_html(card_name: &str) -> Result<String, String> {
+/// For server_utility, pass optional initial_state_json (JSON object with at least `servers` array) to hydrate the UI from saved config.
+pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>) -> Result<String, String> {
     match card_name {
-        "server_utility" => Ok(embed_server_utility()),
+        "server_utility" => Ok(embed_server_utility(initial_state_json)),
         _ => Err(format!("Unknown card: '{}'. Cards are built into the binary at compile time.", card_name)),
     }
 }
 
 /// Check that a card is available (embedded). For API compatibility.
 pub fn card_url(card_name: &str) -> Result<String, String> {
-    embedded_card_html(card_name).map(|_| "embedded".to_string())
+    embedded_card_html(card_name, None).map(|_| "embedded".to_string())
 }
 
 /// Run the Spectre WebView2 app, loading the given card (e.g. "server_utility").
@@ -62,7 +77,7 @@ pub fn run_app() -> Result<(), String> {
 /// Run the app and load a specific card by name. Content is served from memory (embedded at compile time).
 pub fn run_app_with_card(card_name: &str) -> Result<(), String> {
     let _state = Arc::new(AppState::new());
-    let html = embedded_card_html(card_name)?;
+    let html = embedded_card_html(card_name, None)?;
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
