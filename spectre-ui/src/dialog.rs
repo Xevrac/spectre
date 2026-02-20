@@ -136,7 +136,6 @@ impl DialogBuilder {
                 .min(self.max_height.min(max_allowed_height));
             
             let center_x = (window_size.x - width) / 2.0;
-            // Position so dialog bottom is bottom_margin from window bottom (uses more of bottom space)
             let center_y = window_size.y - self.bottom_margin - height;
             let pos = egui::pos2(center_x, center_y);
             (width, height, pos)

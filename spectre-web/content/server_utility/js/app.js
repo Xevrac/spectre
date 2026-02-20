@@ -1,8 +1,3 @@
-/**
- * Server Utility — card UI logic.
- * State and actions; Rust bridge (load/save/start) can be wired later.
- */
-
 (function () {
   'use strict';
 
@@ -12,6 +7,7 @@
         name: 'Server 1',
         port: 22000,
         use_sabre_squadron: true,
+        mpmaplist_path: '',
         current_config: 'Default',
         configs: [
           {
@@ -50,9 +46,7 @@
     ],
     selectedServerIndex: 0,
     selectedConfigIndex: 0,
-    activeTab: 'maps',
-    /** Maps from mpmaplist.txt by style: { Occupation: [...], Cooperative: [...], ... } */
-    availableMapsByStyle: {}
+    activeTab: 'maps'
   };
 
   function ipcLog(msg, detail) {
@@ -69,9 +63,6 @@
       }
       if (typeof initial.selectedServerIndex === 'number') state.selectedServerIndex = Math.min(initial.selectedServerIndex, state.servers.length - 1);
       if (typeof initial.selectedConfigIndex === 'number') state.selectedConfigIndex = Math.min(initial.selectedConfigIndex, (state.servers[state.selectedServerIndex]?.configs?.length || 1) - 1);
-      if (initial.availableMapsByStyle && typeof initial.availableMapsByStyle === 'object') {
-        state.availableMapsByStyle = initial.availableMapsByStyle;
-      }
       delete window.__spectreInitialState;
     } catch (e) {
       console.warn('[IPC JS] Failed to apply __spectreInitialState:', e);
@@ -143,6 +134,7 @@
   }
 
   function bindFormToConfig() {
+    const s = getSelectedServer();
     const c = getSelectedConfig();
     if (!c) return;
     const set = (id, value) => {
@@ -153,6 +145,7 @@
       const el = document.getElementById(id);
       if (el) el.checked = !!value;
     };
+    set('mpmaplist-path', s ? (s.mpmaplist_path || '') : '');
     set('profile-name', c.name);
     set('session-name', c.session_name);
     set('style-select', c.style);
@@ -186,6 +179,7 @@
   }
 
   function bindConfigToForm() {
+    const s = getSelectedServer();
     const c = getSelectedConfig();
     if (!c) return;
     const get = (id) => {
@@ -196,6 +190,7 @@
       const el = document.getElementById(id);
       return el ? el.checked : false;
     };
+    if (s) s.mpmaplist_path = (get('mpmaplist-path') || '').trim();
     const name = get('profile-name').trim();
     if (name) c.name = name;
     c.session_name = get('session-name');
@@ -234,24 +229,64 @@
     c.max_inactivity = parseInt(get('max-inactivity'), 10) || 0;
     c.voice_chat = parseInt(get('voice-chat'), 10) || 0;
     if (c.voice_chat > 6) c.voice_chat = 6;
+    if (s) s.current_config = c.name;
   }
 
   let selectedMapIndex = -1;
   let selectedAvailableMapIndex = -1;
+  let unsavedChanges = false;
+  let unsavedPollInterval = null;
+  const UNSAVED_POLL_MS = 400;
 
-  /** Pool of map names for the current config's style (from mpmaplist). */
+  function setUnsaved(value) {
+    unsavedChanges = !!value;
+    if (unsavedPollInterval !== null) {
+      clearInterval(unsavedPollInterval);
+      unsavedPollInterval = null;
+    }
+    if (unsavedChanges) {
+      unsavedPollInterval = setInterval(function () {
+        var el = document.getElementById('unsaved-indicator');
+        if (el) el.classList.toggle('visible', true);
+      }, UNSAVED_POLL_MS);
+    }
+    var el = document.getElementById('unsaved-indicator');
+    if (el) el.classList.toggle('visible', unsavedChanges);
+    if (!unsavedChanges && el) {
+      requestAnimationFrame(function () {
+        el.classList.remove('visible');
+        void el.offsetHeight;
+        requestAnimationFrame(function () { void el.offsetHeight; });
+      });
+    }
+  }
+
+  function ensureCurrentConfigs() {
+    state.servers.forEach(function (s) {
+      if (!s.configs || !s.configs.length) return;
+      var found = s.configs.some(function (c) { return c && c.name === s.current_config; });
+      if (!found) s.current_config = s.configs[0].name;
+    });
+  }
+
+  function getAvailableMapsForServer() {
+    const s = getSelectedServer();
+    const maps = (s && s.available_maps_by_style) ? s.available_maps_by_style : {};
+    return typeof maps === 'object' ? maps : {};
+  }
+
   function getPoolForCurrentStyle() {
     const c = getSelectedConfig();
     const style = c ? (c.style || 'Occupation') : 'Occupation';
-    let arr = state.availableMapsByStyle[style];
+    const byStyle = getAvailableMapsForServer();
+    let arr = byStyle[style];
     if (!Array.isArray(arr) || arr.length === 0) {
-      if (style === 'Invasion') arr = state.availableMapsByStyle['Occupation'];
-      else if (style === 'Objectives') arr = state.availableMapsByStyle['Objectives'];
+      if (style === 'Invasion') arr = byStyle['Occupation'];
+      else if (style === 'Objectives') arr = byStyle['Objectives'];
     }
     return Array.isArray(arr) ? arr : [];
   }
 
-  /** Maps that can be added: in pool for current style but not already in rotation. */
   function getAvailableMapsForRotation() {
     const c = getSelectedConfig();
     const rotation = c && c.maps ? c.maps : [];
@@ -265,7 +300,7 @@
     const available = getAvailableMapsForRotation();
     if (selectedAvailableMapIndex >= available.length) selectedAvailableMapIndex = -1;
     if (available.length === 0) {
-      ul.innerHTML = '<li class="empty-hint">No maps to add. Set mpmaplist path or add from rotation.</li>';
+      ul.innerHTML = '<li class="empty-hint">No maps to add. Set this server\'s maplist path below and save, then reopen to load maps.</li>';
       selectedAvailableMapIndex = -1;
       return;
     }
@@ -303,7 +338,6 @@
   }
 
   function render() {
-    // Each server's display name = its current profile name (dropdown shows profile names)
     state.servers.forEach(function (srv) {
       const cur = srv.configs && srv.configs.find(function (cfg) { return cfg.name === srv.current_config; });
       if (cur) srv.name = cur.name;
@@ -336,7 +370,6 @@
     };
   }
 
-  // Profile name: sync input -> config, refresh list and server dropdown (server name = profile name)
   const profileNameEl = document.getElementById('profile-name');
   if (profileNameEl) {
     profileNameEl.addEventListener('input', function () {
@@ -349,7 +382,6 @@
     });
   }
 
-  // Profile actions
   document.getElementById('profile-new')?.addEventListener('click', function () {
     const s = getSelectedServer();
     ipcLog('Profile New clicked', s ? 'server=' + s.name : 'no server');
@@ -358,6 +390,7 @@
       const base = last ? { ...last } : { name: 'New profile', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, round_count: 1, respawn_time: 20, spawn_protection: 0, warmup: 10, inverse_damage: 0, friendly_fire: true, auto_team_balance: false, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: true, allow_vehicles: true, difficulty: 'Hard', respawn_number: 1, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 0, max_inactivity: 0, voice_chat: 0, maps: [] };
       s.configs.push({ ...base, name: 'New profile', maps: Array.isArray(base.maps) ? base.maps.slice() : [] });
       state.selectedConfigIndex = s.configs.length - 1;
+      setUnsaved(true);
       render();
       ipcLog('Profile added', 'total configs=' + s.configs.length);
     }
@@ -367,6 +400,7 @@
     if (s && s.configs.length > 1) {
       s.configs.splice(state.selectedConfigIndex, 1);
       state.selectedConfigIndex = Math.min(state.selectedConfigIndex, s.configs.length - 1);
+      setUnsaved(true);
       render();
     }
   });
@@ -377,13 +411,15 @@
       const copy = { ...c, name: c.name + ' (copy)' };
       s.configs.splice(state.selectedConfigIndex + 1, 0, copy);
       state.selectedConfigIndex++;
+      setUnsaved(true);
       render();
     }
   });
 
   document.getElementById('server-add')?.addEventListener('click', function () {
     bindConfigToForm();
-    const nextPort = 22000 + state.servers.length;
+    const ports = state.servers.map(function (s) { return s.port || 22000; });
+    const nextPort = ports.length ? Math.max.apply(null, ports) + 1 : 22000;
     const newServer = {
       name: 'New profile',
       running: false,
@@ -392,6 +428,7 @@
       users: [],
       port: nextPort,
       use_sabre_squadron: true,
+      mpmaplist_path: '',
       current_config: 'Default',
       configs: [
         { name: 'Default', domain: 'Internet', session_name: 'A Spectre Session', style: 'Occupation', max_clients: 64, point_limit: 0, round_limit: 25, round_count: 1, respawn_time: 20, spawn_protection: 0, warmup: 10, inverse_damage: 0, friendly_fire: true, auto_team_balance: false, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: true, allow_vehicles: true, difficulty: 'Hard', respawn_number: 1, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 0, max_inactivity: 0, voice_chat: 0, maps: [] }
@@ -400,6 +437,7 @@
     state.servers.push(newServer);
     state.selectedServerIndex = state.servers.length - 1;
     state.selectedConfigIndex = 0;
+    setUnsaved(true);
     render();
     ipcLog('Server added', 'total servers=' + state.servers.length);
   });
@@ -420,12 +458,20 @@
     const s = getSelectedServer();
     const portEl = document.getElementById('edit-server-port');
     const dialog = document.getElementById('edit-server-dialog');
-    if (s && portEl && dialog) {
-      const port = parseInt(portEl.value, 10);
-      if (port >= 1 && port <= 65535) s.port = port;
-      dialog.close();
-      renderServerSelect();
+    if (!s || !portEl || !dialog) return;
+    const port = parseInt(portEl.value, 10);
+    if (port < 1 || port > 65535) return;
+    const otherHasPort = state.servers.some(function (sv, i) {
+      return i !== state.selectedServerIndex && (sv.port || 22000) === port;
+    });
+    if (otherHasPort) {
+      showMessage('Another server already uses that port.', true);
+      return;
     }
+    s.port = port;
+    setUnsaved(true);
+    dialog.close();
+    renderServerSelect();
   });
 
   document.getElementById('edit-server-cancel')?.addEventListener('click', function () {
@@ -434,41 +480,56 @@
 
   document.getElementById('save-config')?.addEventListener('click', function () {
     bindConfigToForm();
+    ensureCurrentConfigs();
     const payload = JSON.stringify({ action: 'save', servers: state.servers });
     ipcLog('Save clicked', 'ipc.postMessage body=' + payload.length + ' bytes');
     if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
       try {
         window.ipc.postMessage(payload);
-        showSaveStatus('Saving…');
-        // Result is reported via window.__spectreIpcStatus() from Rust after save completes.
+        showMessage('Saving..');
       } catch (err) {
         ipcLog('Save postMessage error', err);
-        showSaveStatus('Save failed.');
+        showMessage('Save failed.', true);
         if (window.__spectreIpcStatus) window.__spectreIpcStatus('Save error: ' + (err && err.message ? err.message : 'postMessage'));
       }
     } else {
       ipcLog('Save skipped', 'window.ipc.postMessage not available');
-      showSaveStatus('Save not available.');
+      showMessage('Save not available.', true);
       if (window.__spectreIpcStatus) window.__spectreIpcStatus('IPC not available');
     }
   });
 
-  function showSaveStatus(msg) {
-    var el = document.getElementById('save-config');
+  function showMessage(msg, isError) {
+    var el = document.getElementById('message-banner');
     if (!el) return;
-    var orig = el.textContent;
-    el.textContent = msg;
-    setTimeout(function () { el.textContent = orig; }, 2000);
+    el.textContent = msg || '';
+    el.className = 'message-banner' + (isError ? ' error' : (msg ? ' success' : ''));
+    if (msg) setTimeout(function () { el.textContent = ''; el.className = 'message-banner'; }, 3000);
   }
 
   document.getElementById('start-server')?.addEventListener('click', function () {
     bindConfigToForm();
-    // TODO: bridge to Rust — start server process for selected server
-    console.log('Start Server (bridge not wired)');
+    ensureCurrentConfigs();
+    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+      try {
+        const payload = JSON.stringify({
+          action: 'start',
+          server_index: state.selectedServerIndex,
+          servers: state.servers
+        });
+        window.ipc.postMessage(payload);
+        ipcLog('Start Server', state.selectedServerIndex);
+      } catch (err) {
+        ipcLog('Start Server postMessage error', err);
+      }
+    } else {
+      ipcLog('Start Server (bridge not wired)');
+    }
   });
 
   document.getElementById('start-all-servers')?.addEventListener('click', function () {
     bindConfigToForm();
+    ensureCurrentConfigs();
     if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
       try {
         const payload = JSON.stringify({ action: 'start_all', servers: state.servers });
@@ -492,6 +553,7 @@
     c.maps.push(name);
     selectedMapIndex = c.maps.length - 1;
     selectedAvailableMapIndex = -1;
+    setUnsaved(true);
     renderAvailableMapList();
     renderMapList();
   });
@@ -501,6 +563,7 @@
     c.maps.splice(selectedMapIndex, 1);
     selectedMapIndex = Math.min(selectedMapIndex, c.maps.length - 1);
     if (c.maps.length === 0) selectedMapIndex = -1;
+    setUnsaved(true);
     renderAvailableMapList();
     renderMapList();
   });
@@ -510,6 +573,7 @@
     const arr = c.maps;
     [arr[selectedMapIndex - 1], arr[selectedMapIndex]] = [arr[selectedMapIndex], arr[selectedMapIndex - 1]];
     selectedMapIndex--;
+    setUnsaved(true);
     renderMapList();
   });
   document.getElementById('map-down')?.addEventListener('click', function () {
@@ -518,18 +582,21 @@
     const arr = c.maps;
     [arr[selectedMapIndex], arr[selectedMapIndex + 1]] = [arr[selectedMapIndex + 1], arr[selectedMapIndex]];
     selectedMapIndex++;
+    setUnsaved(true);
     renderMapList();
   });
 
   document.getElementById('style-select')?.addEventListener('change', function () {
     bindConfigToForm();
-    // Reset map rotation when style changes; previous maps may be from a different game mode
     const c = getSelectedConfig();
     if (c) c.maps = [];
+    setUnsaved(true);
     render();
   });
 
-  // Sync form -> state when switching tabs/config
+  document.querySelector('.content')?.addEventListener('input', function () { setUnsaved(true); });
+  document.querySelector('.content')?.addEventListener('change', function () { setUnsaved(true); });
+
   document.querySelectorAll('.tab').forEach(tab => {
     const orig = tab.onclick;
     tab.onclick = function () {
@@ -541,9 +608,63 @@
   window.__spectreIpcStatus = function (msg) {
     var el = document.getElementById('ipc-debug');
     if (el) el.textContent = 'IPC: ' + (msg || '');
-    if (msg === 'Saved OK') showSaveStatus('Saved');
-    else if (msg && msg.indexOf('Save') !== -1) showSaveStatus('Save failed');
+    if (msg === 'Saved OK') { setUnsaved(false); showMessage('Saved'); }
+    else if (msg && msg.startsWith('STATE:')) {
+      try {
+        var json = msg.slice(6);
+        var next = JSON.parse(json);
+        if (Array.isArray(next)) {
+          state.servers = next;
+          setUnsaved(false);
+          showMessage('Saved');
+          render();
+        }
+      } catch (e) { showMessage('Save failed.', true); }
+    } else if (msg && msg.startsWith('REFRESH:')) {
+      try {
+        var json = msg.slice(8);
+        var next = JSON.parse(json);
+        if (Array.isArray(next)) {
+          state.servers = next;
+          next.forEach(function (s) { (s.configs || []).forEach(function (c) { if (c) c.maps = []; }); });
+          setUnsaved(false);
+          showMessage('Maps loaded');
+          render();
+        }
+      } catch (e) { showMessage('Refresh failed.', true); }
+    } else if (msg && msg.indexOf('Save') !== -1) showMessage('Save failed', true);
+    else if (msg === 'Started OK' || msg === 'All servers started') showMessage('Started');
+    else if (msg && msg.indexOf('MPMAPLIST_PATH:') === 0) {
+      var path = msg.slice('MPMAPLIST_PATH:'.length);
+      var inputEl = document.getElementById('mpmaplist-path');
+      if (inputEl) inputEl.value = path;
+      var s = getSelectedServer();
+      if (s) s.mpmaplist_path = path;
+      showMessage('Loading…');
+      if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+        try {
+          window.ipc.postMessage(JSON.stringify({ action: 'refresh_mpmaplist', servers: state.servers }));
+        } catch (err) { showMessage('Maps loaded'); render(); }
+      } else {
+        showMessage('The mpmaplist has been set successfully.');
+        render();
+      }
+    } else if (msg && msg.indexOf('MPMAPLIST_PATH_INVALID:') === 0) {
+      showMessage(msg.slice('MPMAPLIST_PATH_INVALID:'.length), true);
+    } else if (msg && (msg.indexOf('Error') !== -1 || msg.indexOf('failed') !== -1)) showMessage(msg, true);
   };
+
+  document.getElementById('mpmaplist-browse')?.addEventListener('click', function () {
+    bindConfigToForm();
+    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+      try {
+        var payload = JSON.stringify({ action: 'browse_mpmaplist', servers: state.servers });
+        window.ipc.postMessage(payload);
+      } catch (err) {
+        ipcLog('Browse mpmaplist postMessage error', err);
+      }
+    }
+  });
   render();
   ipcLog('Ready');
 })();

@@ -1,7 +1,3 @@
-//! Spectre Web — main library for the WebView2-based Spectre app (Windows).
-//!
-//! Provides the webview host and app shell.
-//! run as web content. `spectre-ui` and `spectre-core` can depend on this crate.
 
 #![cfg_attr(windows, doc = "Windows WebView2 host and app runner.")]
 #![cfg_attr(not(windows), doc = "Stub when not on Windows.")]

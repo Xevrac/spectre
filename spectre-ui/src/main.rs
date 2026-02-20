@@ -28,9 +28,11 @@ const ABOUT: &str = "Spectre is a toolkit for Hidden & Dangerous 2, providing va
 struct IpcSaveMessage {
     action: String,
     servers: Vec<spectre_core::server::Server>,
+    #[serde(default)]
+    server_index: Option<usize>,
 }
 
-/// Path to hd2_server_config.json next to the executable so it works when run from file explorer.
+/// Path to hd2_server_config.json next to the executable.
 #[cfg(windows)]
 fn server_utility_config_path() -> std::path::PathBuf {
     std::env::current_exe()
@@ -40,6 +42,43 @@ fn server_utility_config_path() -> std::path::PathBuf {
         .join("content")
         .join("server_utility")
         .join("hd2_server_config.json")
+}
+
+#[cfg(windows)]
+fn browse_mpmaplist_with_validation() -> String {
+    use std::io::BufRead;
+    let path = match rfd::FileDialog::new()
+        .add_filter("Text (mpmaplist)", &["txt"])
+        .pick_file()
+    {
+        Some(p) => p,
+        None => return "MPMAPLIST_PATH_CANCELLED".to_string(),
+    };
+    let path_str = path.to_string_lossy();
+    let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase());
+    if ext.as_deref() != Some("txt") {
+        return "MPMAPLIST_PATH_INVALID:Unexpected file format.".to_string();
+    }
+    let file = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return "MPMAPLIST_PATH_INVALID:Unexpected file format.".to_string(),
+    };
+    let mut first_non_empty = String::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => return "MPMAPLIST_PATH_INVALID:Unexpected file format.".to_string(),
+        };
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            first_non_empty = trimmed.to_string();
+            break;
+        }
+    }
+    if !first_non_empty.starts_with("<MAP_LIST>") {
+        return "MPMAPLIST_PATH_INVALID:Unexpected file format.".to_string();
+    }
+    format!("MPMAPLIST_PATH:{}", path_str)
 }
 
 #[cfg(windows)]
@@ -158,7 +197,6 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
     Some(ctx.load_texture(format!("icon_{}", name), color_image, Default::default()))
 }
 
-// No separate exe: WebView is embedded in the main Spectre window (see update() and webview handling).
 
 #[cfg(windows)]
 fn get_webview_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation::HWND> {
@@ -172,13 +210,11 @@ fn get_webview_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation:
         RawWindowHandle::Win32(Win32WindowHandle { hwnd, .. }) => windows::Win32::Foundation::HWND(hwnd.get() as _),
         _ => return None,
     };
-    // Try GetWindow(GW_CHILD) first (first child in Z-order).
     if let Ok(child) = unsafe { GetWindow(main_hwnd, GW_CHILD) } {
         if !child.0.is_null() {
             return Some(child);
         }
     }
-    // Fallback: enumerate children (e.g. if WebView is created on another thread).
     let mut first_child = windows::Win32::Foundation::HWND::default();
     let _ = unsafe {
         EnumChildWindows(main_hwnd, Some(enum_child_first), LPARAM(&mut first_child as *mut _ as _))
@@ -218,14 +254,12 @@ fn set_webview_opacity(hwnd: windows::Win32::Foundation::HWND, alpha: f32) {
     let _ = unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), byte, LWA_ALPHA) };
 }
 
-/// CLI args for elevated one-shot tasks (UAC). Handled before starting the GUI.
 const ARG_ELEVATED_APPLY_REGISTRY: &str = "--elevated-apply-registry";
 const ARG_ELEVATED_APPLY_HOSTS: &str = "--elevated-apply-hosts";
 const ARG_ELEVATED_CHECK_DIRECTPLAY: &str = "--elevated-check-directplay";
 const ARG_ELEVATED_INSTALL_DIRECTPLAY: &str = "--elevated-install-directplay";
 
 fn main() -> Result<(), eframe::Error> {
-    // If we were launched elevated to perform a one-shot fix, do it and exit (no GUI).
     let mut args = std::env::args();
     if let Some(arg) = args.nth(1) {
         if arg == ARG_ELEVATED_APPLY_REGISTRY {
@@ -330,23 +364,19 @@ struct SpectreApp {
     current_module: Option<Box<dyn Module>>,
     show_about: bool,
     show_options: bool,
-    /// Error message when a card (e.g. Server Utility) fails to open.
     card_launch_error: Option<String>,
-    /// When set, create an embedded WebView for this card on the next frame (so we have access to the window).
     #[cfg(windows)]
     pending_webview_card: Option<String>,
     #[cfg(windows)]
-    /// WebView2 child window for web cards. Embedded in the same window; no separate exe.
     webview: Option<wry::WebView>,
-    /// Fade opacity for WebView when modal opens/closes (0 = transparent, 1 = opaque).
     #[cfg(windows)]
     webview_fade_alpha: f32,
-    /// Receives save result from IPC handler so we can run evaluate_script to update the page.
     #[cfg(windows)]
-    ipc_save_rx: Option<mpsc::Receiver<Result<(), String>>>,
-    /// When true, close WebView and reopen server_utility (refresh).
+    ipc_save_rx: Option<mpsc::Receiver<String>>,
     #[cfg(windows)]
     pending_webview_refresh: bool,
+    #[cfg(windows)]
+    webview_repaint_frames: u8,
     splash_screen: Option<SplashScreen>,
     window_centered: bool,
     center_attempts: u32,
@@ -395,6 +425,8 @@ impl SpectreApp {
             ipc_save_rx: None,
             #[cfg(windows)]
             pending_webview_refresh: false,
+            #[cfg(windows)]
+            webview_repaint_frames: 0,
             splash_screen: Some(splash),
             window_centered: false,
             center_attempts: 0,
@@ -438,8 +470,6 @@ impl SpectreApp {
         }
     }
 
-    /// App-wide action bar: Home, Settings, Info. Thin (narrow height). Used above WebView and above modules.
-    /// When `webview_active` is true, tooltips are drawn inline in the bar so they are not covered by the WebView (native window z-order).
     fn show_action_bar(&mut self, ui: &mut egui::Ui, webview_active: bool) {
         const ACTION_BAR_HEIGHT: f32 = 32.0;
         const ACTION_BAR_LEFT_MARGIN: f32 = 6.0;
@@ -459,7 +489,6 @@ impl SpectreApp {
                 |ui| {
                     ui.add_space(ACTION_BAR_LEFT_MARGIN);
                     ui.spacing_mut().item_spacing = egui::vec2(BTN_GAP, 0.0);
-                    // Home
                     let home_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
                     let fill = if home_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
                     ui.painter().rect_filled(home_r.rect, 4.0, fill);
@@ -479,7 +508,6 @@ impl SpectreApp {
                             egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_home"), |ui| ui.label("Return to main screen"));
                         }
                     }
-                    // Settings
                     let set_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
                     let fill = if set_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
                     ui.painter().rect_filled(set_r.rect, 4.0, fill);
@@ -499,7 +527,6 @@ impl SpectreApp {
                             egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_settings"), |ui| ui.label("Settings"));
                         }
                     }
-                    // Info (About)
                     let info_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
                     let fill = if info_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
                     ui.painter().rect_filled(info_r.rect, 4.0, fill);
@@ -519,7 +546,6 @@ impl SpectreApp {
                             egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_info"), |ui| ui.label("About"));
                         }
                     }
-                    // Spacer to push right-side buttons to the end (reserve space for Refresh + optional Dev Tools)
                     let rest = ui.available_width();
                     let right_w = if webview_active {
                         if cfg!(debug_assertions) { BTN_W * 2.0 + BTN_GAP } else { BTN_W }
@@ -529,11 +555,9 @@ impl SpectreApp {
                     if rest > right_w {
                         ui.add_space(rest - right_w);
                     }
-                    // Right side: Dev Tools (left) then Refresh (rightmost), with right margin
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_justify(false), |ui| {
                         ui.add_space(ACTION_BAR_RIGHT_MARGIN);
                         ui.spacing_mut().item_spacing = egui::vec2(BTN_GAP, 0.0);
-                        // Refresh (when webview active) — rightmost
                         if webview_active {
                             let ref_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
                             let fill = if ref_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
@@ -556,7 +580,6 @@ impl SpectreApp {
                                 ui.label(egui::RichText::new("Refresh").size(12.0).color(ui.visuals().weak_text_color()));
                             }
                         }
-                        // Dev Tools (debug only) — left of Refresh
                         #[cfg(debug_assertions)]
                         if webview_active {
                             let dev_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
@@ -602,8 +625,6 @@ impl SpectreApp {
         let gap = 8.0;
         let usable_width = (available_width - (side_padding * 2.0)).max(min_card_width).min(available_width);
 
-        // Pre-compute card layout to keep header and grid aligned within the same content area
-        // Tuple layout: (title, description, category, module_index, is_ready)
         let cards: Vec<(&str, &str, &str, usize, bool)> = vec![
             ("Server Utility", "Launch and manage HD2 game servers", "Tool", 0, true),
             ("DTA Unpacker", "Extract and unpack DTA archive files", "Tool", 1, false),
@@ -622,8 +643,6 @@ impl SpectreApp {
 
         let card_height = 160.0;
         let margin = 4.0;
-
-        // Content block width (centered in panel by layout)
         let content_width = (card_width * cards_per_row as f32)
             + (gap * (cards_per_row.saturating_sub(1)) as f32);
 
@@ -631,7 +650,6 @@ impl SpectreApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.set_width(available_width);
-                // Center the whole content block (header + grid + version) in the panel
                 ui.with_layout(
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
@@ -641,12 +659,10 @@ impl SpectreApp {
                             ui.set_min_width(content_width);
 
                             ui.add_space(40.0);
-
-                            // Heading row: title + subtitle centered in full content width, settings/about on the right
                             let button_group_width = 36.0 + 12.0 + 36.0;
                             ui.horizontal(|ui| {
                                 ui.set_width(content_width);
-                                ui.spacing_mut().item_spacing.x = 0.0; // no extra gap so centering math is exact
+                                ui.spacing_mut().item_spacing.x = 0.0;
                                 let strong = ui.visuals().strong_text_color();
                                 let weak = ui.visuals().weak_text_color();
                                 let font_56 = egui::FontId::new(56.0, egui::FontFamily::Proportional);
@@ -655,10 +671,8 @@ impl SpectreApp {
                                 let g2 = ui.painter().layout_no_wrap("Hidden & Dangerous 2 Toolkit".into(), font_18, weak);
                                 let title_w = g1.size().x.max(g2.size().x);
                                 let title_h = g1.size().y + 8.0 + g2.size().y;
-                                // Center title in full content width (title center at content_width/2)
                                 let left_space = (content_width / 2.0 - title_w / 2.0).max(0.0);
                                 let g1_w = g1.size().x;
-                                // Align right edge of button group with right edge of "Spectre" title (content boundary)
                                 let right_space = (g1_w / 2.0 - title_w / 2.0 - button_group_width).max(8.0);
                                 let g1_h = g1.size().y;
                                 let g2_w = g2.size().x;
@@ -666,7 +680,6 @@ impl SpectreApp {
                                 ui.allocate_ui(
                                     egui::vec2(title_w, title_h),
                                     |ui| {
-                                        // Paint using same galley as measurement so centering is exact
                                         let pos = ui.cursor().min;
                                         let x1 = pos.x + (title_w - g1_w) / 2.0;
                                         let x2 = pos.x + (title_w - g2_w) / 2.0;
@@ -675,7 +688,6 @@ impl SpectreApp {
                                     },
                                 );
                                 ui.add_space(right_space);
-                                // Vertically center buttons with the title block (align with "Spectre" midline)
                                 let button_h = 28.0;
                                 let space_above_buttons = (title_h * 0.5 - button_h * 0.5).max(0.0);
                                 ui.vertical(|ui| {
@@ -760,7 +772,6 @@ impl SpectreApp {
 
                             ui.add_space(80.0);
 
-                            // Card grid: same left edge for every row so columns align (e.g. 4+2 layout)
                             let mut row_start = 0;
                             while row_start < cards.len() {
                                 let row_end = (row_start + cards_per_row).min(cards.len());
@@ -791,7 +802,6 @@ impl SpectreApp {
                                         if clicked && *is_ready {
                                             match idx {
                                                 0 => {
-                                                    // Server Utility: if wizard not completed, show egui wizard first; else embed WebView
                                                     if !self.config.server_utility_wizard_completed {
                                                         self.current_module = Some(Box::new(ServerLauncher::default()));
                                                     } else {
@@ -865,7 +875,6 @@ impl SpectreApp {
                 || response.contains_pointer()
                 || pointer_pos.map_or(false, |pos| rect.contains(pos))
         } else {
-            // Disabled cards don't react to hover state for visuals
             false
         };
 
@@ -878,7 +887,6 @@ impl SpectreApp {
                 stroke = egui::Stroke::new(2.0, ui.visuals().widgets.hovered.bg_stroke.color);
             }
         } else {
-            // Greyed-out background for cards that aren't ready yet
             fill = ui.visuals().extreme_bg_color;
             stroke = egui::Stroke::new(1.5, ui.visuals().widgets.inactive.bg_stroke.color);
         }
@@ -959,7 +967,6 @@ impl SpectreApp {
                                 egui::pos2(right_x - 4.0, top_y + icon_size + 4.0),
                             );
                             
-                            // Desaturate icon slightly when not ready
                             let tint = if is_ready {
                                 egui::Color32::WHITE
                             } else {
@@ -1041,7 +1048,6 @@ impl SpectreApp {
             });
         });
 
-        // Register click on the whole card content area so clicks on text count (on top in hit-test)
         let content_clicked = if is_ready {
             let id = ui.id().with("card_click").with(title);
             ui.interact(inner_rect, id, egui::Sense::click()).clicked()
@@ -1049,7 +1055,6 @@ impl SpectreApp {
             false
         };
 
-        // For cards that aren't ready yet, overlay a soft diagonal line pattern (clipped to card)
         if !is_ready {
             let stripe_color =
                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22);
@@ -1076,7 +1081,6 @@ impl SpectreApp {
             }
         }
 
-        // Clicks on the card: outer area, inner content, or explicit content-area interact
         let clicked = response.clicked() || inner.response.clicked() || content_clicked;
 
         is_ready && clicked
@@ -1085,7 +1089,6 @@ impl SpectreApp {
 
 impl eframe::App for SpectreApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // When wizard is finished, switch to web view in the same frame (never show old egui launcher UI)
         if ctx.data_mut(|d| d.get_temp::<()>(egui::Id::new("spectre_open_web_after_wizard")).is_some()) {
             ctx.data_mut(|d| d.remove::<()>(egui::Id::new("spectre_open_web_after_wizard")));
             self.current_module = None;
@@ -1120,30 +1123,28 @@ impl eframe::App for SpectreApp {
                         spectre_core::server::ServerLauncherData::default()
                     });
                 ensure_server_utility_has_defaults(&mut data);
-                // When config was missing or empty, use app Settings mpmaplist path so maplist still loads
-                if data.server_manager.mpmaplist_path.is_empty() && !self.config.server_mpmaplist_path.is_empty() {
-                    data.server_manager.mpmaplist_path = self.config.server_mpmaplist_path.clone();
-                }
-                let available_maps = if data.server_manager.mpmaplist_path.is_empty() {
-                    std::collections::HashMap::new()
-                } else {
-                    let path = std::path::Path::new(&data.server_manager.mpmaplist_path);
-                    let resolved = spectre_core::mpmaplist::resolve_mpmaplist_path(path);
-                    let maps = spectre_core::mpmaplist::load_from_path(path);
-                    let total: usize = maps.values().map(|v| v.len()).sum();
-                    if total > 0 {
-                        for (style, list) in &maps {
-                            println!("[IPC] mpmaplist style {}: {} maps", style, list.len());
+                for (i, server) in data.servers.iter_mut().enumerate() {
+                    let maps = if server.mpmaplist_path.is_empty() {
+                        std::collections::HashMap::new()
+                    } else {
+                        let path = std::path::Path::new(&server.mpmaplist_path);
+                        let resolved = spectre_core::mpmaplist::resolve_mpmaplist_path(path);
+                        let maps = spectre_core::mpmaplist::load_from_path(path);
+                        let total: usize = maps.values().map(|v| v.len()).sum();
+                        if total > 0 {
+                            for (style, list) in &maps {
+                                println!("[IPC] mpmaplist server {} style {}: {} maps", i, style, list.len());
+                            }
+                            println!("[IPC] mpmaplist server {} total: {} maps from {}", i, total, resolved.display());
+                        } else if !server.mpmaplist_path.is_empty() {
+                            println!("[IPC] mpmaplist server {}: no maps from {}", i, resolved.display());
                         }
-                        println!("[IPC] mpmaplist total: {} maps from {}", total, resolved.display());
-                    } else if !data.server_manager.mpmaplist_path.is_empty() {
-                        println!("[IPC] mpmaplist: no maps parsed from {} (check path and file format)", resolved.display());
-                    }
-                    maps
-                };
+                        maps
+                    };
+                    server.available_maps_by_style = maps;
+                }
                 match serde_json::to_value(&data) {
-                    Ok(mut value) => {
-                        value["availableMapsByStyle"] = serde_json::to_value(&available_maps).unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                    Ok(value) => {
                         match serde_json::to_string(&value) {
                             Ok(json) => {
                                 let source = if path_exists { "from file" } else { "defaults" };
@@ -1200,23 +1201,118 @@ impl eframe::App for SpectreApp {
                                         let _ = std::fs::create_dir_all(parent);
                                     }
                                     let result = data.save_to_file(&config_path).map_err(|e| e.to_string());
-                                    if result.is_ok() {
+                                    let status = if result.is_ok() {
                                         println!("[IPC] Save OK -> {}", config_path.display());
+                                        let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                                            .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
+                                        ensure_server_utility_has_defaults(&mut data);
+                                        for server in data.servers.iter_mut() {
+                                            let maps = if server.mpmaplist_path.is_empty() {
+                                                std::collections::HashMap::new()
+                                            } else {
+                                                let path = std::path::Path::new(&server.mpmaplist_path);
+                                                spectre_core::mpmaplist::load_from_path(path)
+                                            };
+                                            server.available_maps_by_style = maps;
+                                        }
+                                        match serde_json::to_string(&data.servers) {
+                                            Ok(json) => format!("STATE:{}", json),
+                                            Err(_) => "Saved OK".to_string(),
+                                        }
                                     } else {
                                         println!("[IPC] Save failed: {:?}", result);
+                                        result.unwrap_err()
+                                    };
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "start" => {
+                                    let idx = msg.server_index.unwrap_or(0);
+                                    let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
+                                        Ok(mut data) => {
+                                            let app_config = Config::load();
+                                            if !app_config.server_hd2ds_path.is_empty() {
+                                                data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
+                                            }
+                                            if !app_config.server_sabresquadron_path.is_empty() {
+                                                data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
+                                            }
+                                            match msg.servers.get(idx) {
+                                                Some(server) => spectre_core::ds_launch::start_ds(&data.server_manager, server),
+                                                None => Err(format!("Invalid server index {}", idx)),
+                                            }
+                                        }
+                                        Err(e) => Err(e),
+                                    };
+                                    if result.is_ok() {
+                                        println!("[IPC] Start server {} OK", idx);
+                                    } else {
+                                        println!("[IPC] Start server failed: {:?}", result);
                                     }
-                                    let _ = ipc_tx.send(result);
+                                    let status = result.map_or_else(|e| e, |()| "Started OK".to_string());
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "browse_mpmaplist" => {
+                                    let status = browse_mpmaplist_with_validation();
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "refresh_mpmaplist" => {
+                                    let mut servers = msg.servers;
+                                    for server in servers.iter_mut() {
+                                        let maps = if server.mpmaplist_path.trim().is_empty() {
+                                            std::collections::HashMap::new()
+                                        } else {
+                                            let path = std::path::Path::new(&server.mpmaplist_path);
+                                            spectre_core::mpmaplist::load_from_path(path)
+                                        };
+                                        server.available_maps_by_style = maps;
+                                    }
+                                    let status = match serde_json::to_string(&servers) {
+                                        Ok(json) => format!("REFRESH:{}", json),
+                                        Err(_) => "Refresh failed.".to_string(),
+                                    };
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "start_all" => {
+                                    let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
+                                        Ok(mut data) => {
+                                            let app_config = Config::load();
+                                            if !app_config.server_hd2ds_path.is_empty() {
+                                                data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
+                                            }
+                                            if !app_config.server_sabresquadron_path.is_empty() {
+                                                data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
+                                            }
+                                            let mut errs = Vec::new();
+                                            for server in &msg.servers {
+                                                if let Err(e) = spectre_core::ds_launch::start_ds(&data.server_manager, server) {
+                                                    errs.push(format!("{}: {}", server.name, e));
+                                                }
+                                            }
+                                            if errs.is_empty() {
+                                                Ok(())
+                                            } else {
+                                                Err(errs.join("; "))
+                                            }
+                                        }
+                                        Err(e) => Err(e),
+                                    };
+                                    if result.is_ok() {
+                                        println!("[IPC] Start all servers OK");
+                                    } else {
+                                        println!("[IPC] Start all had errors: {:?}", result);
+                                    }
+                                    let status = result.map_or_else(|e| e, |()| "All servers started".to_string());
+                                    let _ = ipc_tx.send(status);
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
                                     println!("[IPC] Parse postMessage failed: {}", e);
-                                    let _ = ipc_tx.send(Err(e.to_string()));
+                                    let _ = ipc_tx.send(format!("Error: {}", e));
                                 }
                             }
                         }
                     })
                     .with_devtools({
-                        // Only enable DevTools (F12) in debug builds; disabled in release.
                         cfg!(debug_assertions)
                     })
                     .with_html(&html);
@@ -1239,29 +1335,41 @@ impl eframe::App for SpectreApp {
                 .unwrap_or(1.0);
             let screen = ctx.screen_rect();
             const ACTION_BAR_HEIGHT: f32 = 32.0;
+            let h = ((screen.height() - ACTION_BAR_HEIGHT) * scale).max(1.0) as u32;
             let bounds = wry::Rect {
                 x: 0,
                 y: (ACTION_BAR_HEIGHT * scale) as i32,
                 width: (screen.width() * scale) as u32,
-                height: ((screen.height() - ACTION_BAR_HEIGHT) * scale).max(1.0) as u32,
+                height: if self.webview_repaint_frames == 2 && h > 1 {
+                    h - 1
+                } else {
+                    h
+                },
             };
             let _ = wv.set_bounds(bounds);
         }
 
         #[cfg(windows)]
         if let Some(ref rx) = self.ipc_save_rx {
-            if let Ok(result) = rx.try_recv() {
-                let status_msg = result.as_ref().map_or_else(|e| format!("Save failed: {}", e), |()| "Saved OK".to_string());
+            if let Ok(status_msg) = rx.try_recv() {
                 let script = format!(
                     "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
-                    serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('Saved OK')".to_string())
+                    serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
                 );
                 if let Some(ref wv) = self.webview {
                     if let Err(e) = wv.evaluate_script(&script) {
                         println!("[IPC] evaluate_script status failed: {}", e);
                     }
                 }
+                self.webview_repaint_frames = 3;
+                ctx.request_repaint();
             }
+        }
+
+        #[cfg(windows)]
+        if self.webview_repaint_frames > 0 {
+            self.webview_repaint_frames = self.webview_repaint_frames.saturating_sub(1);
+            ctx.request_repaint();
         }
 
         if !self.window_centered && self.center_attempts < 15 {
@@ -1463,31 +1571,16 @@ impl eframe::App for SpectreApp {
                             format!("Must be a file named \"{}\" that exists.", Self::server_path_expected_filename(1)),
                         );
                     }
-                    ui.label("mpmaplist.txt location:");
-                    ui.horizontal(|ui| {
-                        ui.add_enabled(
-                            paths_enabled,
-                            egui::TextEdit::singleline(&mut self.config.server_mpmaplist_path)
-                                .desired_width(PATH_INPUT_WIDTH),
-                        );
-                        if ui.add_enabled(paths_enabled, egui::Button::new("📁 Browse…")).clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Text", &["txt"]).pick_file() {
-                                self.config.server_mpmaplist_path = p.to_string_lossy().into_owned();
-                            }
-                        }
-                    });
-                    let valid_mpmaplist = Self::validate_server_path(2, &self.config.server_mpmaplist_path);
-                    if !valid_mpmaplist && !self.config.server_mpmaplist_path.trim().is_empty() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 80, 80),
-                            format!("Must be a file named \"{}\" that exists.", Self::server_path_expected_filename(2)),
-                        );
-                    }
 
                     ui.add_space(15.0);
                     ui.separator();
 
                     if ui.button("Close").clicked() {
+                        if self.config.server_hd2ds_path.trim().is_empty()
+                            || self.config.server_sabresquadron_path.trim().is_empty()
+                        {
+                            self.config.server_utility_wizard_completed = false;
+                        }
                         self.config.save();
                         println!("[DEBUG] Options dialog closed");
                         self.show_options = false;
@@ -1570,10 +1663,9 @@ impl eframe::App for SpectreApp {
             }
         }
 
-        // Fade WebView in/out when modals open or close.
         #[cfg(windows)]
         if let Some(ref wv) = self.webview {
-            const FADE_SPEED: f32 = 4.0; // ~0.25s for full fade
+            const FADE_SPEED: f32 = 4.0;
             let any_modal = self.show_options || self.show_about || self.card_launch_error.is_some();
             let dt = ctx.input(|i| i.unstable_dt).max(0.0).min(0.1);
             if let Some(hwnd) = get_webview_hwnd(frame) {
@@ -1597,7 +1689,6 @@ impl eframe::App for SpectreApp {
                     }
                 }
             } else {
-                // Fallback if we can't get HWND: instant show/hide
                 let show_webview = !any_modal;
                 let _ = wv.set_visible(show_webview);
                 self.webview_fade_alpha = if show_webview { 1.0 } else { 0.0 };
@@ -1635,7 +1726,6 @@ impl eframe::App for SpectreApp {
                 }
             });
 
-        // Apply "go home" from home button (done after panel so we don't double-borrow self)
         if ctx.data_mut(|d| d.get_temp::<()>(egui::Id::new("spectre_go_home")).is_some()) {
             ctx.data_mut(|d| d.remove::<()>(egui::Id::new("spectre_go_home")));
             #[cfg(windows)]
@@ -1643,7 +1733,6 @@ impl eframe::App for SpectreApp {
                 self.webview = None;
             }
             self.current_module = None;
-            // Reload config so card readiness (e.g. wizard completed) is up to date
             self.config = Config::load();
         }
     }

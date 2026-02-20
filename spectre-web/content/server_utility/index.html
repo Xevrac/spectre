@@ -9,8 +9,12 @@
 <body>
   <header class="toolbar">
     <h1 class="toolbar-title">Server Utility</h1>
-    <button type="button" class="btn btn-primary" id="save-config">Save Configuration</button>
+    <span class="toolbar-save-row">
+      <span class="unsaved-indicator" id="unsaved-indicator" aria-label="Unsaved changes" title="Unsaved changes"></span>
+      <button type="button" class="btn btn-primary" id="save-config">Save</button>
+    </span>
   </header>
+  <div class="message-banner" id="message-banner" role="status" aria-live="polite"></div>
 
   <div class="main">
     <aside class="sidebar">
@@ -91,10 +95,20 @@
           </div>
           <div class="panel-card">
             <h2 class="panel-heading">Map rotation</h2>
-            <p class="map-hint">Maps come from <code>mpmaplist.txt</code>. Add maps from the available pool into the rotation or remove them.</p>
+            <div class="form-row form-row-with-button">
+              <label for="mpmaplist-path">Maplist path (mpmaplist.txt) — per server</label>
+              <div class="input-with-icon">
+                <input type="text" class="input" id="mpmaplist-path" placeholder="Path to mpmaplist.txt">
+                <button type="button" class="btn btn-icon" id="mpmaplist-browse" title="Browse for mpmaplist.txt (must be .txt, first line must start with &lt;MAP_LIST&gt;)">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                  <span class="btn-icon-label">Browse</span>
+                </button>
+              </div>
+            </div>
+            <p class="map-hint">Maps come from this server's <code>mpmaplist.txt</code>. Set the path (Browse or type) and save to persist; maps load when you set the path. Add maps from the available list into the rotation.</p>
             <div class="map-lists-row">
               <div class="map-list-box">
-                <label class="map-list-label">Available (from mpmaplist)</label>
+                <label class="map-list-label">Available</label>
                 <ul class="map-list" id="available-map-list" role="listbox" aria-label="Available maps"></ul>
               </div>
               <div class="map-list-actions">

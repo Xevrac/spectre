@@ -1,12 +1,7 @@
-// Core logic for parsing mpmaplist.txt (HD2 server manager format).
-// File contains <gamestyle type="..."> sections and <map name="..."> entries.
-// Maps are grouped by game style for the UI: only maps from the pool can be added to the rotation.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Style tag in file (lowercase) -> display name used in config/UI.
 const STYLE_TAG_TO_NAME: &[(&str, &str)] = &[
     ("hd2multiplayer", "Objectives"),
     ("teamplay", "Occupation"),
@@ -15,7 +10,6 @@ const STYLE_TAG_TO_NAME: &[(&str, &str)] = &[
     ("invasion", "Invasion"),
 ];
 
-/// Resolve path: if it's a directory or doesn't end with "mpmaplist.txt", append "mpmaplist.txt".
 pub fn resolve_mpmaplist_path(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     let ends_with_file = s.ends_with("mpmaplist.txt") || s.ends_with("mpmaplist.TXT")
@@ -27,10 +21,7 @@ pub fn resolve_mpmaplist_path(path: &Path) -> PathBuf {
     }
 }
 
-/// Parse mpmaplist.txt and return maps grouped by game style.
-/// Keys: "Objectives", "Occupation", "Deathmatch", "Cooperative", "Invasion".
-/// If path is a directory or doesn't end with mpmaplist.txt, joins with "mpmaplist.txt".
-/// Returns empty map if file is missing or unreadable.
+/// Parse mpmaplist.txt; returns maps by style. Empty if missing/unreadable.
 pub fn load_from_path(path: &Path) -> HashMap<String, Vec<String>> {
     let resolved = resolve_mpmaplist_path(path);
     let content = match fs::read_to_string(&resolved) {
@@ -40,7 +31,6 @@ pub fn load_from_path(path: &Path) -> HashMap<String, Vec<String>> {
     parse_mpmaplist(&content)
 }
 
-/// Extract attribute value: name="val" or name='val' (case-insensitive for attr name).
 fn extract_attr(line_lower: &str, line_orig: &str, attr: &str) -> Option<String> {
     let search_dq = format!("{}=\"", attr);
     let search_sq = format!("{}='", attr);
@@ -59,7 +49,6 @@ fn extract_attr(line_lower: &str, line_orig: &str, attr: &str) -> Option<String>
     None
 }
 
-/// Parse mpmaplist content (same format as mpmaplist.txt).
 pub fn parse_mpmaplist(content: &str) -> HashMap<String, Vec<String>> {
     let mut by_tag: HashMap<String, Vec<String>> = HashMap::new();
     let tag_names: HashMap<String, String> = STYLE_TAG_TO_NAME
@@ -76,7 +65,6 @@ pub fn parse_mpmaplist(content: &str) -> HashMap<String, Vec<String>> {
         }
         let lower = trimmed.to_lowercase();
 
-        // <gamestyle type="teamplay"> or type='teamplay' -> current section
         if lower.contains("<gamestyle") {
             if let Some(tag) = extract_attr(&lower, trimmed, "type") {
                 if !tag.is_empty() {
@@ -86,7 +74,6 @@ pub fn parse_mpmaplist(content: &str) -> HashMap<String, Vec<String>> {
             continue;
         }
 
-        // <map name="Map Name"> or <map name='...' /> -> add map to current section
         if lower.contains("<map") {
             if let Some(name) = extract_attr(&lower, trimmed, "name") {
                 if !name.is_empty() {
@@ -101,7 +88,6 @@ pub fn parse_mpmaplist(content: &str) -> HashMap<String, Vec<String>> {
         }
     }
 
-    // Convert tag keys to display names
     let mut result = HashMap::new();
     for (tag, maps) in by_tag {
         if let Some(name) = tag_names.get(&tag) {

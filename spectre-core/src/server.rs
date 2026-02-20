@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -8,7 +9,6 @@ pub struct ServerManager {
     pub server_port: u16,
     pub hd2ds_path: String,
     pub hd2ds_sabresquadron_path: String,
-    pub mpmaplist_path: String,
     pub enable_watchdog: bool,
     pub watchdog_interval: u32,
     pub enable_messaging: bool,
@@ -76,8 +76,11 @@ pub struct Server {
     pub messages: bool,
     pub users: Vec<String>,
     pub port: u16,
-    /// When true, use HD2DS_SabreSquadron.exe; otherwise HD2DS.exe
     pub use_sabre_squadron: bool,
+    #[serde(default)]
+    pub mpmaplist_path: String,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub available_maps_by_style: HashMap<String, Vec<String>>,
     pub current_config: String,
     pub configs: Vec<ServerConfig>,
 }
@@ -96,7 +99,6 @@ impl Default for ServerManager {
             server_port: 2332,
             hd2ds_path: String::new(),
             hd2ds_sabresquadron_path: String::new(),
-            mpmaplist_path: String::new(),
             enable_watchdog: true,
             watchdog_interval: 15,
             enable_messaging: true,
@@ -163,6 +165,8 @@ impl Default for Server {
             users: Vec::new(),
             port: 22000,
             use_sabre_squadron: true,
+            mpmaplist_path: String::new(),
+            available_maps_by_style: HashMap::new(),
             current_config: String::new(),
             configs: Vec::new(),
         }
@@ -170,7 +174,7 @@ impl Default for Server {
 }
 
 impl ServerLauncherData {
-    /// Load server launcher config from a JSON file. If the file does not exist, returns default.
+    /// Load config from JSON; default if missing.
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
         if !path.exists() {
             return Ok(Self::default());
@@ -180,7 +184,7 @@ impl ServerLauncherData {
         serde_json::from_str(&content).map_err(|e| format!("Invalid config JSON: {}", e))
     }
 
-    /// Save server launcher config as pretty-printed JSON.
+    /// Save config as pretty-printed JSON.
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;

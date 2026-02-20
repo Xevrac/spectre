@@ -1,6 +1,3 @@
-//! Server prerequisites for HD2 dedicated server (Windows): DirectPlay, registry IP fix,
-//! and GameSpy hosts file entries. Used by the first-time setup wizard.
-
 #[cfg(windows)]
 mod windows {
     use std::fs;
@@ -8,7 +5,6 @@ mod windows {
     use std::process::Command;
 
     const DIRECTPLAY_FEATURE_NAME: &str = "DirectPlay";
-    /// Registry path (under HKEY_LOCAL_MACHINE). 64-bit: WOW6432Node for 32-bit app compatibility.
     const REG_PATH: &str = r"SOFTWARE\WOW6432Node\Microsoft\DirectPlay8\IPAddressFamilySettings";
     const REG_VALUE_HD2DS: &str = "HD2DS";
     const REG_VALUE_HD2DS_SS: &str = "HD2DS_SabreSquadron";
@@ -16,8 +12,6 @@ mod windows {
     const REG_VALUE_HD2: &str = "hd2";
     const REG_REQUIRED: u32 = 2;
 
-    /// Check if DirectPlay Windows Optional Feature is enabled.
-    /// Tries DISM get-featureinfo, then DISM get-features (scan all), then PowerShell.
     pub fn directplay_enabled() -> bool {
         if directplay_via_dism_featureinfo() {
             return true;
@@ -42,16 +36,12 @@ mod windows {
         };
         let text = String::from_utf8_lossy(&out.stdout);
         let text_lower = text.to_lowercase();
-        // DISM can output "State : Enabled", "State: Enabled", or "State : Enabled" (various spacing).
-        // Require that we see DirectPlay in the output to avoid false positives from other features.
         if !text_lower.contains("directplay") {
             return false;
         }
-        // Any line that contains both "state" and "enabled" (e.g. "State : Enabled" or "State:Enabled")
         for line in text.lines() {
             let line_lower = line.trim().to_lowercase();
             if line_lower.contains("state") && line_lower.contains("enabled") {
-                // Disabled would be "Disabled"; "Enabled" means feature is on
                 if line_lower.contains("disabled") {
                     return false;
                 }

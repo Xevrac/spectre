@@ -1,6 +1,3 @@
-//! WebView2 app host (Windows).
-//! Card content is embedded at compile time from spectre-web/content/<card_name>/.
-//! Source stays as separate files for editing; the binary is fully self-contained at runtime.
 
 #![cfg(windows)]
 
@@ -9,7 +6,6 @@ use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
 
-/// Shared app state (for future use: config, bridge, etc.).
 #[derive(Default)]
 pub struct AppState {
     _placeholder: (),
@@ -21,8 +17,6 @@ impl AppState {
     }
 }
 
-// ───── Compile-time embedding: source in spectre-web/content/<card_name>/ ─────
-// Paths are relative to this file (src/app.rs). Add new cards under content/<name>/ and a branch below.
 
 const SERVER_UTILITY_HTML: &str = include_str!("../content/server_utility/index.html");
 const SERVER_UTILITY_CSS: &str = include_str!("../content/server_utility/css/style.css");
@@ -54,9 +48,7 @@ fn embed_server_utility(initial_state_json: Option<&str>) -> String {
         )
 }
 
-/// Returns the full inlined HTML for a card by name. Cards live under content/<card_name>/ and are embedded at build time.
-/// Used by spectre-ui to embed the WebView in the main window.
-/// For server_utility, pass optional initial_state_json (JSON object with at least `servers` array) to hydrate the UI from saved config.
+/// Inlined HTML for a card by name (embedded at build time).
 pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>) -> Result<String, String> {
     match card_name {
         "server_utility" => Ok(embed_server_utility(initial_state_json)),
@@ -64,17 +56,14 @@ pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>) -> 
     }
 }
 
-/// Check that a card is available (embedded). For API compatibility.
 pub fn card_url(card_name: &str) -> Result<String, String> {
     embedded_card_html(card_name, None).map(|_| "embedded".to_string())
 }
 
-/// Run the Spectre WebView2 app, loading the given card (e.g. "server_utility").
 pub fn run_app() -> Result<(), String> {
     run_app_with_card("server_utility")
 }
 
-/// Run the app and load a specific card by name. Content is served from memory (embedded at compile time).
 pub fn run_app_with_card(card_name: &str) -> Result<(), String> {
     let _state = Arc::new(AppState::new());
     let html = embedded_card_html(card_name, None)?;

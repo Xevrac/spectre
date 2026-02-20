@@ -15,8 +15,7 @@ use std::time::Instant;
 const CONFIGS_DIR: &str = "content/server_utility";
 const CONFIG_FILENAME: &str = "hd2_server_config.json";
 
-/// Step 0 = prerequisites (DirectPlay + registry); steps 1–3 = path selection.
-const WIZARD_STEPS: usize = 4;
+const WIZARD_STEPS: usize = 3;
 
 pub struct ServerLauncher {
     data: ServerLauncherData,
@@ -26,24 +25,15 @@ pub struct ServerLauncher {
     check_icon: Option<TextureHandle>,
     cross_icon: Option<TextureHandle>,
     config: Config,
-    /// Shown on step 0 when "Apply registry fix" fails.
     registry_fix_error: Option<String>,
-    /// Shown on step 0 when "Add GameSpy hosts" fails.
     hosts_fix_error: Option<String>,
-    /// Receives result from UAC-elevated registry fix (when user clicks Apply registry fix).
     registry_elevate_rx: Option<mpsc::Receiver<Result<(), String>>>,
-    /// Receives result from UAC-elevated hosts fix (when user clicks Add GameSpy hosts).
     hosts_elevate_rx: Option<mpsc::Receiver<Result<(), String>>>,
-    /// Cached (registry, hosts) so we don't run checks every frame. DirectPlay uses Run detection.
     prereq_cache: Option<(bool, bool)>,
     prereq_cache_time: Option<Instant>,
-    /// DirectPlay: result of elevated "Run detection" (None = not run yet, Some(true) = enabled, Some(false) = not found).
     directplay_detection_result: Option<bool>,
-    /// Receives result from UAC-elevated DirectPlay detection.
     directplay_check_rx: Option<mpsc::Receiver<Result<bool, String>>>,
-    /// Receives result from UAC-elevated DirectPlay install.
     directplay_install_rx: Option<mpsc::Receiver<Result<(), String>>>,
-    /// Error message from DirectPlay detection or install.
     directplay_error: Option<String>,
 }
 
@@ -95,9 +85,7 @@ impl Default for ServerLauncher {
             .unwrap_or_else(|_| ServerLauncherData::default());
         data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
         data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
-        data.server_manager.mpmaplist_path = app_config.server_mpmaplist_path.clone();
 
-        // Ensure at least one server with one profile (config) so the UI is never empty
         if data.servers.is_empty() {
             let mut server = Server::default();
             server.name = "Server 1".to_string();
@@ -110,7 +98,10 @@ impl Default for ServerLauncher {
             server.configs.push(default_config);
             data.servers.push(server);
         }
-        let show_first_time_wizard = !app_config.server_utility_wizard_completed;
+        let paths_empty = app_config.server_hd2ds_path.trim().is_empty()
+            || app_config.server_sabresquadron_path.trim().is_empty();
+        let show_first_time_wizard =
+            !app_config.server_utility_wizard_completed || paths_empty;
         let directplay_from_config = app_config.directplay_detected;
         let directplay_detection_result = if directplay_from_config {
             println!("[DEBUG] DirectPlay: loaded from config (previously detected as enabled)");
@@ -153,12 +144,23 @@ impl Module for ServerLauncher {
             self.cross_icon = cross;
         }
 
+        self.config = Config::load();
+        if !self.show_first_time_wizard {
+            self.data.server_manager.hd2ds_path = self.config.server_hd2ds_path.clone();
+            self.data.server_manager.hd2ds_sabresquadron_path =
+                self.config.server_sabresquadron_path.clone();
+            let paths_empty = self.config.server_hd2ds_path.trim().is_empty()
+                || self.config.server_sabresquadron_path.trim().is_empty();
+            if !self.config.server_utility_wizard_completed || paths_empty {
+                self.show_first_time_wizard = true;
+            }
+        }
+
         if self.show_first_time_wizard {
             self.show_first_time_wizard_dialog(ctx);
             return;
         }
 
-        // Wizard completed: on Windows we transition to WebView (main.rs). On non-Windows, show placeholder.
         ui.label(
             egui::RichText::new("Server Utility is available as a web interface on Windows. Use the first-time setup when paths are empty.")
                 .color(ui.visuals().weak_text_color()),
@@ -166,13 +168,27 @@ impl Module for ServerLauncher {
     }
 }
 
+fn strip_windows_long_path_prefix(path: &str) -> String {
+    let path = path.trim();
+    if path.starts_with(r"\\?\") {
+        if path.starts_with(r"\\?\UNC\") {
+            path.replacen(r"\\?\UNC\", r"\\", 1)
+        } else {
+            path.replacen(r"\\?\", "", 1)
+        }
+    } else {
+        path.to_string()
+    }
+}
+
 impl ServerLauncher {
     fn validate_wizard_step(step: usize, path: &str) -> bool {
+        let path = strip_windows_long_path_prefix(path);
         let path = path.trim();
         if path.is_empty() {
             return false;
         }
-        let p = Path::new(path);
+        let p = Path::new(&path);
         let name = match p.file_name().and_then(|n| n.to_str()) {
             Some(n) => n,
             None => return false,
@@ -180,12 +196,12 @@ impl ServerLauncher {
         let expected = match step {
             0 => "HD2DS.exe",
             1 => "HD2DS_SabreSquadron.exe",
-            _ => "mpmaplist.txt",
+            _ => "HD2DS_SabreSquadron.exe",
         };
-        if name.eq_ignore_ascii_case(expected) && p.exists() {
-            return true;
+        if !name.eq_ignore_ascii_case(expected) {
+            return false;
         }
-        false
+        p.exists() || p.canonicalize().is_ok()
     }
 
     fn show_first_time_wizard_dialog(&mut self, ctx: &egui::Context) {
@@ -198,15 +214,12 @@ impl ServerLauncher {
 
         let step = self.first_time_wizard_step.min(WIZARD_STEPS.saturating_sub(1));
 
-        // Step 0 = prerequisites; steps 1–3 = path selection (HD2DS, Sabre, mpmaplist).
         let path_step = step.saturating_sub(1);
         let path_for_validation = match step {
             1 => self.data.server_manager.hd2ds_path.as_str(),
             2 => self.data.server_manager.hd2ds_sabresquadron_path.as_str(),
-            3 => self.data.server_manager.mpmaplist_path.as_str(),
             _ => "",
         };
-        // Use cached (registry, hosts) when on step 0. DirectPlay uses elevated "Run detection" only.
         const PREREQ_CACHE_TTL_SECS: u64 = 2;
         let (registry_ok_cached, hosts_ok_cached) = if step == 0 {
             let now = Instant::now();
@@ -236,7 +249,6 @@ impl ServerLauncher {
         let expected_filename = match step {
             1 => "HD2DS.exe",
             2 => "HD2DS_SabreSquadron.exe",
-            3 => "mpmaplist.txt",
             _ => "",
         };
 
@@ -251,12 +263,6 @@ impl ServerLauncher {
                 "HD2DS Sabre Squadron path:",
                 &mut self.data.server_manager.hd2ds_sabresquadron_path,
                 &["exe"][..],
-                false,
-            ),
-            3 => (
-                "mpmaplist.txt location:",
-                &mut self.data.server_manager.mpmaplist_path,
-                &["txt"][..],
                 false,
             ),
             _ => ("", &mut self.data.server_manager.hd2ds_path, &["exe"][..], false),
@@ -286,7 +292,6 @@ impl ServerLauncher {
                 ui.add_space(12.0);
 
                 if step == 0 {
-                    // Poll for results from UAC-elevated fix threads; invalidate cache so we re-check
                     if let Some(rx) = &self.registry_elevate_rx {
                         if let Ok(result) = rx.try_recv() {
                             match &result {
@@ -311,7 +316,6 @@ impl ServerLauncher {
                             self.prereq_cache_time = None;
                         }
                     }
-                    // Poll DirectPlay detection result
                     if let Some(rx) = &self.directplay_check_rx {
                         if let Ok(result) = rx.try_recv() {
                             self.directplay_check_rx = None;
@@ -329,7 +333,6 @@ impl ServerLauncher {
                             }
                         }
                     }
-                    // Poll DirectPlay install result
                     if let Some(rx) = &self.directplay_install_rx {
                         if let Ok(result) = rx.try_recv() {
                             self.directplay_install_rx = None;
@@ -354,7 +357,6 @@ impl ServerLauncher {
                     let registry_ok = registry_ok_cached;
                     let hosts_ok = hosts_ok_cached;
 
-                    // DirectPlay row: tooltip, Run detection (or Checking... / success / Install DirectPlay)
                     let directplay_pending = self.directplay_check_rx.is_some() || self.directplay_install_rx.is_some();
                     ui.horizontal(|ui| {
                         if directplay_ok {
@@ -626,13 +628,17 @@ impl ServerLauncher {
                     .pick_file()
             };
             if let Some(p) = chosen {
-                let s = p.to_string_lossy().into_owned();
+                let s = p
+                    .canonicalize()
+                    .map(|c| c.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+                let s = strip_windows_long_path_prefix(s.trim());
                 match step {
                     1 => self.data.server_manager.hd2ds_path = s,
                     2 => self.data.server_manager.hd2ds_sabresquadron_path = s,
-                    3 => self.data.server_manager.mpmaplist_path = s,
                     _ => {}
                 }
+                ctx.request_repaint();
             }
         }
         if back_clicked {
@@ -645,13 +651,11 @@ impl ServerLauncher {
             self.config.server_hd2ds_path = self.data.server_manager.hd2ds_path.clone();
             self.config.server_sabresquadron_path = self.data.server_manager.hd2ds_sabresquadron_path
                 .clone();
-            self.config.server_mpmaplist_path = self.data.server_manager.mpmaplist_path.clone();
             self.config.server_utility_wizard_completed = true;
             self.config.save();
             let _ = self.data.save_to_file(Path::new(&self.config_path));
             self.show_first_time_wizard = false;
             self.first_time_wizard_step = 0;
-            // Signal main app to close this module and open the web-based Server Utility (no old layout)
             ctx.data_mut(|d| d.insert_temp(egui::Id::new("spectre_open_web_after_wizard"), ()));
         }
     }
