@@ -10,7 +10,12 @@
   <header class="toolbar">
     <h1 class="toolbar-title">Server Utility</h1>
     <span class="toolbar-save-row">
-      <span class="unsaved-indicator" id="unsaved-indicator" aria-label="Unsaved changes" title="Unsaved changes"></span>
+      <span class="unsaved-indicator" id="unsaved-indicator" aria-label="Unsaved changes" title="Unsaved changes">
+      <span class="unsaved-dot"></span>
+      <span class="unsaved-label-container">
+        <span class="unsaved-label">Unsaved</span>
+      </span>
+    </span>
       <button type="button" class="btn btn-primary" id="save-config">Save</button>
     </span>
   </header>
@@ -19,11 +24,19 @@
   <div class="main">
     <aside class="sidebar">
       <section class="sidebar-section" id="server-section">
+        <div class="server-status-wrap">
+          <div class="server-status" id="server-status" aria-live="polite">
+            <span class="server-status-dot" id="server-status-dot"></span>
+            <span class="server-status-text" id="server-status-text">Stopped</span>
+            <span class="server-status-players" id="server-status-players" aria-label="Players">-- / --</span>
+          </div>
+        </div>
         <label class="sidebar-label">Server</label>
         <select class="select" id="server-select" aria-label="Select server"></select>
         <div class="server-section-actions">
           <button type="button" class="btn btn-sm" id="server-add">Add</button>
           <button type="button" class="btn btn-sm" id="edit-server">Edit</button>
+          <button type="button" class="btn btn-sm btn-stop" id="server-delete" title="Delete this server">Delete</button>
         </div>
       </section>
 
@@ -48,18 +61,26 @@
       <div class="sidebar-spacer"></div>
       <button type="button" class="btn btn-start" id="start-server">Start Server</button>
       <button type="button" class="btn btn-sm" id="start-all-servers">Start All Servers</button>
+      <button type="button" class="btn btn-sm btn-stop" id="stop-all-servers" style="display: none;">Stop All Servers</button>
     </aside>
 
     <main class="content">
       <div class="tabs" role="tablist">
-        <button type="button" class="tab" data-tab="maps" role="tab" aria-selected="true">Maps</button>
-        <button type="button" class="tab" data-tab="general" role="tab">General</button>
+        <button type="button" class="tab" data-tab="console" role="tab" aria-selected="true">Console</button>
+        <button type="button" class="tab" data-tab="maps" role="tab">General</button>
         <button type="button" class="tab" data-tab="coop" role="tab">Coop</button>
-        <button type="button" class="tab" data-tab="advanced" role="tab">Advanced</button>
+        <button type="button" class="tab" data-tab="players" role="tab">Players</button>
+        <button type="button" class="tab" data-tab="logs" role="tab">Logs</button>
+        <button type="button" class="tab" data-tab="general" role="tab">Settings</button>
       </div>
 
       <div class="tab-panels">
-        <section class="tab-panel" id="panel-maps" role="tabpanel">
+        <section class="tab-panel" id="panel-console" role="tabpanel">
+          <div class="panel-card">
+            <p class="form-notice form-notice-info">Coming soon!</p>
+          </div>
+        </section>
+        <section class="tab-panel hidden" id="panel-maps" role="tabpanel">
           <div class="panel-card">
             <h2 class="panel-heading">Session &amp; game</h2>
             <div class="form-row">
@@ -73,22 +94,22 @@
             <div class="form-row">
               <label>Style</label>
               <select class="select" id="style-select">
+                <option value="Deathmatch">Deathmatch</option>
                 <option value="Occupation">Occupation</option>
-                <option value="Cooperative">Cooperative</option>
-                <option value="Invasion">Invasion</option>
                 <option value="Objectives">Objectives</option>
+                <option value="Cooperative">Coop</option>
               </select>
             </div>
             <div class="form-row">
               <label>Domain</label>
               <div class="radio-group" role="radiogroup" aria-label="Domain type">
                 <label class="radio-label">
-                  <input type="radio" name="domain-type" value="Internet" id="domain-internet">
-                  Internet
+                  <input type="radio" name="domain-type" value="local" id="domain-local" checked>
+                  Local
                 </label>
                 <label class="radio-label">
-                  <input type="radio" name="domain-type" value="LAN" id="domain-lan">
-                  LAN
+                  <input type="radio" name="domain-type" value="Internet" id="domain-internet">
+                  Internet
                 </label>
               </div>
             </div>
@@ -96,7 +117,7 @@
           <div class="panel-card">
             <h2 class="panel-heading">Map rotation</h2>
             <div class="form-row form-row-with-button">
-              <label for="mpmaplist-path">Maplist path (mpmaplist.txt) — per server</label>
+              <label for="mpmaplist-path">Maplist path (mpmaplist.txt) — per profile</label>
               <div class="input-with-icon">
                 <input type="text" class="input" id="mpmaplist-path" placeholder="Path to mpmaplist.txt">
                 <button type="button" class="btn btn-icon" id="mpmaplist-browse" title="Browse for mpmaplist.txt (must be .txt, first line must start with &lt;MAP_LIST&gt;)">
@@ -114,9 +135,18 @@
               <div class="map-list-actions">
                 <button type="button" class="btn btn-sm" id="map-add" title="Add selected map to rotation">Add →</button>
                 <button type="button" class="btn btn-sm" id="map-remove" title="Remove from rotation">← Remove</button>
+                <div class="map-add-random-row">
+                  <input type="number" class="input input-num" id="map-add-random-count" min="1" value="1" aria-label="Number of maps to add randomly">
+                  <button type="button" class="btn btn-sm" id="map-add-random" title="Add this many random maps from available to rotation">Add Random Maps</button>
+                </div>
               </div>
               <div class="map-list-box">
                 <label class="map-list-label">Rotation</label>
+                <div class="map-rotation-toolbar">
+                  <button type="button" class="btn btn-sm" id="map-shuffle" title="Randomize order of maps in rotation">Shuffle List</button>
+                  <button type="button" class="btn btn-sm" id="map-sort" title="Sort rotation alphabetically">Sort List</button>
+                  <button type="button" class="btn btn-sm btn-stop" id="map-remove-all" title="Remove all maps from rotation">Remove All</button>
+                </div>
                 <div class="map-list-with-order">
                   <ul class="map-list" id="map-list" role="listbox" aria-label="Map rotation"></ul>
                   <div class="map-order-buttons" aria-label="Reorder rotation">
@@ -135,11 +165,11 @@
 
         <section class="tab-panel hidden" id="panel-general" role="tabpanel">
           <div class="panel-card">
-            <h2 class="panel-heading">General</h2>
+            <h2 class="panel-heading">Settings</h2>
             <div class="form-grid">
               <div class="form-row">
                 <label>Max clients</label>
-                <input type="number" class="input input-num" id="max-clients" min="1" max="64" value="64">
+                <input type="number" class="input input-num" id="max-clients" min="1" max="64" value="32">
               </div>
               <div class="form-row">
                 <label>Point limit</label>
@@ -147,19 +177,19 @@
               </div>
               <div class="form-row">
                 <label>Round limit</label>
-                <input type="number" class="input input-num" id="round-limit" min="0" value="25">
+                <input type="number" class="input input-num" id="round-limit" min="0" value="5">
               </div>
               <div class="form-row">
                 <label>Round count</label>
-                <input type="number" class="input input-num" id="round-count" min="1" max="20" value="1">
+                <input type="number" class="input input-num" id="round-count" min="1" max="20" value="3">
               </div>
               <div class="form-row">
                 <label>Respawn time (s)</label>
-                <input type="number" class="input input-num" id="respawn-time" min="0" value="20">
+                <input type="number" class="input input-num" id="respawn-time" min="0" value="3">
               </div>
               <div class="form-row">
                 <label>Spawn protection (s)</label>
-                <input type="number" class="input input-num" id="spawn-protection" min="0" max="30" value="0">
+                <input type="number" class="input input-num" id="spawn-protection" min="0" max="30" value="5">
               </div>
               <div class="form-row">
                 <label>Warmup (s)</label>
@@ -167,7 +197,7 @@
               </div>
               <div class="form-row">
                 <label>Inverse damage (%)</label>
-                <input type="number" class="input input-num" id="inverse-damage" min="0" max="200" value="0">
+                <input type="number" class="input input-num" id="inverse-damage" min="0" max="200" value="100">
               </div>
               <div class="form-row">
                 <label class="checkbox-label">
@@ -176,7 +206,7 @@
               </div>
               <div class="form-row">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="auto-team-balance"> Auto team balance
+                  <input type="checkbox" id="auto-team-balance" checked> Auto team balance
                 </label>
               </div>
               <div class="form-row">
@@ -196,13 +226,73 @@
               </div>
               <div class="form-row">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="allow-respawn" checked> Allow respawn
+                  <input type="checkbox" id="allow-respawn"> Allow respawn
                 </label>
               </div>
               <div class="form-row">
                 <label class="checkbox-label">
                   <input type="checkbox" id="allow-vehicles" checked> Allow vehicles
                 </label>
+              </div>
+            </div>
+          </div>
+          <div class="panel-advanced-section">
+            <div class="panel-card">
+              <h2 class="panel-heading">Advanced</h2>
+              <div class="form-grid">
+                <div class="form-row">
+                  <label>Password</label>
+                  <input type="password" class="input" id="password" placeholder="Server password">
+                </div>
+                <div class="form-row">
+                  <label>Admin password</label>
+                  <input type="password" class="input" id="admin-pass" placeholder="Admin password">
+                </div>
+                <div class="form-row">
+                  <label>Max ping</label>
+                  <input type="number" class="input input-num" id="max-ping" min="0" value="0">
+                </div>
+                <div class="form-row">
+                  <label>Max frequency</label>
+                  <input type="number" class="input input-num" id="max-freq" min="0" value="50">
+                </div>
+                <div class="form-row">
+                  <label>Max inactivity (s)</label>
+                  <input type="number" class="input input-num" id="max-inactivity" min="0" value="0">
+                </div>
+                <div class="form-row form-row-with-notice">
+                  <p class="form-notice form-notice-info">Not in use</p>
+                  <label>Voice chat</label>
+                  <select class="select" id="voice-chat" disabled aria-label="Voice chat (not in use)">
+                    <option value="0" selected>Not used</option>
+                    <option value="1">Codec 1.2 kbps</option>
+                    <option value="2">Codec 3.2 kbps</option>
+                    <option value="3">Codec 6.4 kbps</option>
+                    <option value="4">Codec 8.0 kbps</option>
+                    <option value="5">Codec 13.0 kbps</option>
+                    <option value="6">Codec 32.0 kbps</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="panel-card">
+              <h2 class="panel-heading">Watchdog</h2>
+              <p class="map-hint">Restart crashed servers automatically. Optionally restart all servers every N days (e.g. 16). Requires Spectre to be running.</p>
+              <p class="form-notice form-notice-info form-notice-full">0 = no timed restart. When &gt; 0, all servers are stopped and started again after this many days.</p>
+              <div class="form-grid">
+                <div class="form-row form-row-full">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="watchdog-restart-on-crash" checked> Restart on crash
+                  </label>
+                </div>
+                <div class="form-row">
+                  <label for="watchdog-restart-days">Restart all every (days)</label>
+                  <input type="number" class="input input-num" id="watchdog-restart-days" min="0" max="365" value="0" aria-label="Restart interval in days, 0 = off">
+                </div>
+                <div class="form-row">
+                  <label for="log-rotation-days">Rotate logs after (days)</label>
+                  <input type="number" class="input input-num" id="log-rotation-days" min="0" max="365" value="0" aria-label="Clear log file after this many days, 0 = no rotation">
+                </div>
               </div>
             </div>
           </div>
@@ -223,7 +313,7 @@
               </div>
               <div class="form-row">
                 <label>Respawn number (0 = no limit)</label>
-                <input type="number" class="input input-num" id="respawn-number" min="0" max="99" value="1">
+                <input type="number" class="input input-num" id="respawn-number" min="0" max="99" value="0">
               </div>
               <div class="form-row form-row-full">
                 <label class="checkbox-label">
@@ -234,43 +324,75 @@
           </div>
         </section>
 
-        <section class="tab-panel hidden" id="panel-advanced" role="tabpanel">
+        <section class="tab-panel hidden" id="panel-players" role="tabpanel">
           <div class="panel-card">
-            <h2 class="panel-heading">Advanced</h2>
-            <div class="form-grid">
-              <div class="form-row">
-                <label>Password</label>
-                <input type="password" class="input" id="password" placeholder="Server password">
+            <h2 class="panel-heading">Current players</h2>
+            <p class="map-hint">Players currently in the selected server. Click an IP to reveal it.</p>
+            <div class="players-table-wrap">
+              <table class="players-table" id="current-players-table" aria-label="Current players">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">IP</th>
+                  </tr>
+                </thead>
+                <tbody id="current-players-tbody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel-card">
+            <h2 class="panel-heading">Banlist</h2>
+            <p class="map-hint">Players whose IP matches an entry here are kicked. Optionally add a comment (e.g. reason); it is shown in the console when they are kicked.</p>
+            <p class="form-notice form-notice-info">The comment is sent to the server via <code>asay</code> command.</p>
+            <div class="form-row form-row-with-button">
+              <label for="ban-list-add-ip">Add entry</label>
+              <div class="input-with-button input-row-two">
+                <input type="text" class="input" id="ban-list-add-ip" placeholder="IP e.g. 192.168.1.1" aria-label="Ban list IP">
+                <input type="text" class="input" id="ban-list-add-comment" placeholder="Comment (optional)" aria-label="Ban list comment">
+                <button type="button" class="btn btn-sm" id="ban-list-add">Add</button>
               </div>
-              <div class="form-row">
-                <label>Admin password</label>
-                <input type="password" class="input" id="admin-pass" placeholder="Admin password">
+            </div>
+            <ul class="map-list list-single" id="ban-list" role="listbox" aria-label="Banlist"></ul>
+            <div class="list-actions-inline">
+              <button type="button" class="btn btn-sm" id="ban-list-remove" title="Remove selected">Remove selected</button>
+            </div>
+          </div>
+          <div class="panel-card">
+            <h2 class="panel-heading">Whitelist</h2>
+            <p class="form-row form-row-full">
+              <label class="checkbox-label">
+                <input type="checkbox" id="enable-whitelist"> Only allow whitelisted players (kick everyone else when enabled)
+              </label>
+            </p>
+            <p class="map-hint">When enabled, only players whose IP is in the list below may stay. Add IP and optional comment.</p>
+            <div class="form-row form-row-with-button">
+              <label for="whitelist-add-ip">Add entry</label>
+              <div class="input-with-button input-row-two">
+                <input type="text" class="input" id="whitelist-add-ip" placeholder="IP e.g. 192.168.1.1" aria-label="Whitelist IP">
+                <input type="text" class="input" id="whitelist-add-comment" placeholder="Comment (optional)" aria-label="Whitelist comment">
+                <button type="button" class="btn btn-sm" id="whitelist-add">Add</button>
               </div>
-              <div class="form-row">
-                <label>Max ping</label>
-                <input type="number" class="input input-num" id="max-ping" min="0" value="0">
+            </div>
+            <ul class="map-list list-single" id="whitelist-list" role="listbox" aria-label="Whitelist"></ul>
+            <div class="list-actions-inline">
+              <button type="button" class="btn btn-sm" id="whitelist-remove" title="Remove selected">Remove selected</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel hidden" id="panel-logs" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">App log</h2>
+            <p class="map-hint">DS-Helper and DS events from Spectre. You can open the log file in your file explorer or refresh below.</p>
+            <div class="form-row form-row-full">
+              <div class="log-actions">
+                <button type="button" class="btn btn-sm" id="logs-refresh" title="Reload log content">Refresh</button>
+                <button type="button" class="btn btn-sm" id="logs-open-folder" title="Open log file in file explorer">Open log file</button>
               </div>
-              <div class="form-row">
-                <label>Max frequency</label>
-                <input type="number" class="input input-num" id="max-freq" min="0" value="0">
-              </div>
-              <div class="form-row">
-                <label>Max inactivity (s)</label>
-                <input type="number" class="input input-num" id="max-inactivity" min="0" value="0">
-              </div>
-              <div class="form-row form-row-with-notice">
-                <p class="form-notice form-notice-info">Not in use</p>
-                <label>Voice chat</label>
-                <select class="select" id="voice-chat" disabled aria-label="Voice chat (not in use)">
-                  <option value="0" selected>Not used</option>
-                  <option value="1">Codec 1.2 kbps</option>
-                  <option value="2">Codec 3.2 kbps</option>
-                  <option value="3">Codec 6.4 kbps</option>
-                  <option value="4">Codec 8.0 kbps</option>
-                  <option value="5">Codec 13.0 kbps</option>
-                  <option value="6">Codec 32.0 kbps</option>
-                </select>
-              </div>
+            </div>
+            <div class="log-content-wrap">
+              <pre class="log-content" id="log-content" aria-label="Log file content"></pre>
             </div>
           </div>
         </section>
@@ -284,6 +406,32 @@
       <div class="form-row">
         <label for="edit-server-port">Port</label>
         <input type="number" class="input input-num" id="edit-server-port" min="1" max="65535" value="22000" aria-label="Server port">
+      </div>
+      <div class="form-row">
+        <label for="edit-server-hd2ds-path">HD2DS.exe location</label>
+        <div class="input-with-icon">
+          <input type="text" class="input" id="edit-server-hd2ds-path" placeholder="Path to HD2DS.exe" aria-label="HD2DS.exe location">
+          <button type="button" class="btn btn-icon" id="edit-server-browse-hd2ds" title="Select HD2DS.exe">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            <span class="btn-icon-label">Browse</span>
+          </button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="edit-server-sabre-path">HD2DS_SabreSquadron.exe location</label>
+        <div class="input-with-icon">
+          <input type="text" class="input" id="edit-server-sabre-path" placeholder="Path to HD2DS_SabreSquadron.exe" aria-label="HD2DS_SabreSquadron.exe location">
+          <button type="button" class="btn btn-icon" id="edit-server-browse-sabre" title="Select HD2DS_SabreSquadron.exe">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            <span class="btn-icon-label">Browse</span>
+          </button>
+        </div>
+      </div>
+      <div class="form-row" id="edit-server-duplicate-warning" style="display: none;">
+        <p class="form-notice form-notice-warning" role="alert"></p>
+      </div>
+      <div class="form-row" id="edit-server-validation" style="display: none;">
+        <p class="form-notice form-notice-warning" role="alert"></p>
       </div>
       <div class="dialog-actions">
         <button type="submit" class="btn btn-primary" id="edit-server-save">Save</button>

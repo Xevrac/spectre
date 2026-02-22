@@ -7,7 +7,6 @@ const STYLE_TAG_TO_NAME: &[(&str, &str)] = &[
     ("teamplay", "Occupation"),
     ("deathmatch", "Deathmatch"),
     ("cooperative", "Cooperative"),
-    ("invasion", "Invasion"),
 ];
 
 pub fn resolve_mpmaplist_path(path: &Path) -> PathBuf {

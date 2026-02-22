@@ -22,7 +22,7 @@ const SERVER_UTILITY_HTML: &str = include_str!("../content/server_utility/index.
 const SERVER_UTILITY_CSS: &str = include_str!("../content/server_utility/css/style.css");
 const SERVER_UTILITY_JS: &str = include_str!("../content/server_utility/js/app.js");
 
-fn embed_server_utility(initial_state_json: Option<&str>) -> String {
+fn embed_server_utility(initial_state_json: Option<&str>, debug_mode: bool) -> String {
     let initial_script = if let Some(json) = initial_state_json {
         let escaped = json
             .replace('\\', "\\\\")
@@ -37,6 +37,11 @@ fn embed_server_utility(initial_state_json: Option<&str>) -> String {
     } else {
         String::new()
     };
+    let debug_script = if debug_mode {
+        r#"<script>window.__spectreDebugMode=true;</script>"#
+    } else {
+        ""
+    };
     SERVER_UTILITY_HTML
         .replace(
             r#"<link rel="stylesheet" href="css/style.css">"#,
@@ -44,20 +49,21 @@ fn embed_server_utility(initial_state_json: Option<&str>) -> String {
         )
         .replace(
             r#"<script src="js/app.js"></script>"#,
-            &format!("{}<script>{}</script>", initial_script, SERVER_UTILITY_JS),
+            &format!("{}{}<script>{}</script>", initial_script, debug_script, SERVER_UTILITY_JS),
         )
 }
 
 /// Inlined HTML for a card by name (embedded at build time).
-pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>) -> Result<String, String> {
+/// When debug_mode is true, the card may show extra debug-only controls (e.g. emulate watchdog restart).
+pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>, debug_mode: bool) -> Result<String, String> {
     match card_name {
-        "server_utility" => Ok(embed_server_utility(initial_state_json)),
+        "server_utility" => Ok(embed_server_utility(initial_state_json, debug_mode)),
         _ => Err(format!("Unknown card: '{}'. Cards are built into the binary at compile time.", card_name)),
     }
 }
 
 pub fn card_url(card_name: &str) -> Result<String, String> {
-    embedded_card_html(card_name, None).map(|_| "embedded".to_string())
+    embedded_card_html(card_name, None, false).map(|_| "embedded".to_string())
 }
 
 pub fn run_app() -> Result<(), String> {
@@ -66,7 +72,7 @@ pub fn run_app() -> Result<(), String> {
 
 pub fn run_app_with_card(card_name: &str) -> Result<(), String> {
     let _state = Arc::new(AppState::new());
-    let html = embedded_card_html(card_name, None)?;
+    let html = embedded_card_html(card_name, None, false)?;
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()

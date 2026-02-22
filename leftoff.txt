@@ -1,0 +1,27 @@
+Logs not working
+	> Move it to the right of the Console button
+	> Add a border to the right of the logs button that separates the two buttons with the rest
+
+Current players
+	> The polling/updates take way to long, I had to be in the game for over 30 seconds for it to appear (same with playercount now when it used to be much faster)
+		> It appears something changed with the window refreshing because when stopping the server it takes time too reflect its stopped
+	> Click to reveal isn't working, have it show a nice css / spoiler tag that animates. When you click it, the IP appears
+	> Add a "Ban" button to the right of the IP column for each player row
+
+Restart all every (days)
+0
+Rotate logs after (days)
+0
+I cannot update these, they appear stuck on 0
+
+Console
+	> Add console support (stdout)
+
+Logs
+	> Log the console output (once stdout is defined)
+
+Asay
+	> 43 char limit for messages is the maximum limit. Need to implement this onto the kick reason and whitelist reason 
+
+Rename this App log
+DS-Helper and DS events from Spectre. You can open the log file in your file explorer or refresh below.

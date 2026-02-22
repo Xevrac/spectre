@@ -2,6 +2,8 @@
 
 mod config;
 mod dialog;
+#[cfg(windows)]
+mod ds_helper;
 mod modules;
 mod server_prereqs;
 mod splash;
@@ -15,9 +17,11 @@ use modules::{
     ServerLauncher,
 };
 use splash::SplashScreen;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHOR: &str = "Xevrac";
@@ -30,6 +34,11 @@ struct IpcSaveMessage {
     servers: Vec<spectre_core::server::Server>,
     #[serde(default)]
     server_index: Option<usize>,
+    #[serde(default)]
+    server_manager: Option<spectre_core::server::ServerManager>,
+    /// For action "browse_hd2_dir": "hd2ds" or "sabre"
+    #[serde(default)]
+    browse_which: Option<String>,
 }
 
 /// Path to hd2_server_config.json next to the executable.
@@ -42,6 +51,58 @@ fn server_utility_config_path() -> std::path::PathBuf {
         .join("content")
         .join("server_utility")
         .join("hd2_server_config.json")
+}
+
+/// Path to the app log file (next to the executable). Used for DS-Helper and DS events.
+/// TODO: Logging will capture the server stdout in a future release.
+#[cfg(windows)]
+fn app_log_path(config_path: &std::path::Path) -> std::path::PathBuf {
+    config_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| config_path.as_ref())
+        .join("spectre_app.log")
+}
+
+/// Append a timestamped line to the app log. If rotation_days > 0 and the file is older than that many days, the file is truncated first.
+#[cfg(windows)]
+fn write_app_log(
+    state: &Arc<Mutex<(std::path::PathBuf, u32)>>,
+    line: &str,
+) {
+    let (path, rotation_days) = match state.lock() {
+        Ok(guard) => (guard.0.clone(), guard.1),
+        Err(_) => return,
+    };
+    use std::io::Write;
+    let now = chrono::Local::now();
+    let timestamp = now.format("%Y-%m-%d %H:%M:%S");
+    let full_line = format!("[{}] {}\n", timestamp, line);
+    if rotation_days > 0 && path.exists() {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default();
+                let rotation_secs = rotation_days as u64 * 24 * 3600;
+                if age.as_secs() >= rotation_secs {
+                    let _ = std::fs::OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&path);
+                }
+            }
+        }
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = f.write_all(full_line.as_bytes());
+        let _ = f.flush();
+    }
 }
 
 #[cfg(windows)]
@@ -79,6 +140,25 @@ fn browse_mpmaplist_with_validation() -> String {
         return "MPMAPLIST_PATH_INVALID:Unexpected file format.".to_string();
     }
     format!("MPMAPLIST_PATH:{}", path_str)
+}
+
+/// Open file dialog to select the exe. which: "hd2ds" or "sabre".
+#[cfg(windows)]
+fn browse_hd2_exe(which: &str) -> String {
+    let file = match rfd::FileDialog::new()
+        .add_filter("Executable", &["exe"])
+        .pick_file()
+    {
+        Some(p) => p,
+        None => return "HD2DS_PATH_CANCELLED".to_string(),
+    };
+    let path_str = file.to_string_lossy();
+    let prefix = if which == "sabre" {
+        "HD2DS_SABRE_PATH:"
+    } else {
+        "HD2DS_PATH:"
+    };
+    format!("{}{}", prefix, path_str)
 }
 
 #[cfg(windows)]
@@ -134,6 +214,17 @@ fn load_icon() -> Option<Arc<IconData>> {
     Some(Arc::new(create_default_icon()))
 }
 
+#[cfg(windows)]
+fn load_tray_icon() -> Option<tray_icon::Icon> {
+    let icon_bytes = include_bytes!("../spectre_256.png");
+    let image = image::load_from_memory(icon_bytes).ok()?;
+    let rgba = image.to_rgba8();
+    let small = image::imageops::resize(&rgba, 16, 16, image::imageops::FilterType::Triangle);
+    let (w, h) = small.dimensions();
+    let bytes = small.into_raw();
+    tray_icon::Icon::from_rgba(bytes, w, h).ok()
+}
+
 fn create_default_icon() -> IconData {
     let size: u32 = 256;
     let size_usize = size as usize;
@@ -165,6 +256,7 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
         "info" => include_bytes!("../icons/info.svg"),
         "console" => include_bytes!("../icons/console.svg"),
         "refresh" => include_bytes!("../icons/refresh.svg"),
+        "tray" => include_bytes!("../icons/tray.svg"),
         _ => return None,
     };
     
@@ -199,17 +291,22 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
 
 
 #[cfg(windows)]
-fn get_webview_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation::HWND> {
+fn get_main_window_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation::HWND> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle, Win32WindowHandle};
+    let handle = frame.window_handle().ok()?;
+    let raw = handle.as_raw();
+    match raw {
+        RawWindowHandle::Win32(Win32WindowHandle { hwnd, .. }) => Some(windows::Win32::Foundation::HWND(hwnd.get() as _)),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn get_webview_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation::HWND> {
     use windows::Win32::Foundation::LPARAM;
     use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetWindow, GW_CHILD};
 
-    let handle = frame.window_handle().ok()?;
-    let raw = handle.as_raw();
-    let main_hwnd = match raw {
-        RawWindowHandle::Win32(Win32WindowHandle { hwnd, .. }) => windows::Win32::Foundation::HWND(hwnd.get() as _),
-        _ => return None,
-    };
+    let main_hwnd = get_main_window_hwnd(frame)?;
     if let Ok(child) = unsafe { GetWindow(main_hwnd, GW_CHILD) } {
         if !child.0.is_null() {
             return Some(child);
@@ -236,6 +333,37 @@ unsafe extern "system" fn enum_child_first(
         *ptr = hwnd;
     }
     windows::Win32::Foundation::BOOL(0)
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::Foundation::CloseHandle;
+    if pid == 0 {
+        return false;
+    }
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+    let Ok(h) = handle else { return false };
+    let mut exit_code: u32 = 0;
+    let ok = unsafe { GetExitCodeProcess(h, &mut exit_code).is_ok() };
+    let _ = unsafe { CloseHandle(h) };
+    ok && exit_code == 259 // STILL_ACTIVE
+}
+
+#[cfg(windows)]
+fn kill_process_by_pid(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    use windows::Win32::Foundation::CloseHandle;
+    if pid == 0 {
+        return false;
+    }
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) };
+    let Ok(h) = handle else { return false };
+    let result = unsafe { TerminateProcess(h, 1) };
+    let _ = unsafe { CloseHandle(h) };
+    result.is_ok()
 }
 
 #[cfg(windows)]
@@ -377,6 +505,30 @@ struct SpectreApp {
     pending_webview_refresh: bool,
     #[cfg(windows)]
     webview_repaint_frames: u8,
+    #[cfg(windows)]
+    server_pids: Arc<Mutex<HashMap<u16, u32>>>,
+    #[cfg(windows)]
+    last_watchdog_check: Option<Instant>,
+    #[cfg(windows)]
+    tray_icon: Option<tray_icon::TrayIcon>,
+    #[cfg(windows)]
+    tray_show_id: Option<tray_icon::menu::MenuId>,
+    #[cfg(windows)]
+    tray_quit_id: Option<tray_icon::menu::MenuId>,
+    #[cfg(windows)]
+    window_hidden_to_tray: bool,
+    #[cfg(windows)]
+    pending_hide_to_tray: bool,
+    /// When minimized to tray: (x, y, width, height) to restore. Window is moved off-screen instead of SW_HIDE so the event loop keeps running.
+    #[cfg(windows)]
+    saved_tray_rect: Option<(i32, i32, i32, i32)>,
+    #[cfg(windows)]
+    helper_kicked: Arc<Mutex<HashMap<u16, HashSet<String>>>>,
+    #[cfg(windows)]
+    helper_last_slots: Arc<Mutex<HashMap<u16, Vec<(String, String)>>>>,
+    /// (log file path, rotation_days) for app log. Set when Server Launcher webview is created.
+    #[cfg(windows)]
+    log_state: Option<Arc<Mutex<(std::path::PathBuf, u32)>>>,
     splash_screen: Option<SplashScreen>,
     window_centered: bool,
     center_attempts: u32,
@@ -384,6 +536,8 @@ struct SpectreApp {
     home_icon: Option<TextureHandle>,
     settings_icon: Option<TextureHandle>,
     info_icon: Option<TextureHandle>,
+    #[cfg(windows)]
+    tray_button_icon: Option<TextureHandle>,
     refresh_icon: Option<TextureHandle>,
     #[cfg(debug_assertions)]
     console_icon: Option<TextureHandle>,
@@ -404,6 +558,8 @@ impl SpectreApp {
         let home_icon = load_svg_icon(&cc.egui_ctx, "home");
         let settings_icon = load_svg_icon(&cc.egui_ctx, "settings");
         let info_icon = load_svg_icon(&cc.egui_ctx, "info");
+        #[cfg(windows)]
+        let tray_button_icon = load_svg_icon(&cc.egui_ctx, "tray");
         let refresh_icon = load_svg_icon(&cc.egui_ctx, "refresh");
         #[cfg(debug_assertions)]
         let console_icon = load_svg_icon(&cc.egui_ctx, "console");
@@ -427,6 +583,28 @@ impl SpectreApp {
             pending_webview_refresh: false,
             #[cfg(windows)]
             webview_repaint_frames: 0,
+            #[cfg(windows)]
+            server_pids: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(windows)]
+            last_watchdog_check: None,
+            #[cfg(windows)]
+            tray_icon: None,
+            #[cfg(windows)]
+            tray_show_id: None,
+            #[cfg(windows)]
+            tray_quit_id: None,
+            #[cfg(windows)]
+            window_hidden_to_tray: false,
+            #[cfg(windows)]
+            pending_hide_to_tray: false,
+            #[cfg(windows)]
+            saved_tray_rect: None,
+            #[cfg(windows)]
+            helper_kicked: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(windows)]
+            helper_last_slots: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(windows)]
+            log_state: None,
             splash_screen: Some(splash),
             window_centered: false,
             center_attempts: 0,
@@ -434,6 +612,8 @@ impl SpectreApp {
             home_icon,
             settings_icon,
             info_icon,
+            #[cfg(windows)]
+            tray_button_icon,
             refresh_icon,
             #[cfg(debug_assertions)]
             console_icon,
@@ -442,32 +622,6 @@ impl SpectreApp {
 
     fn apply_theme(ctx: &egui::Context) {
         ctx.set_visuals(egui::Visuals::dark());
-    }
-
-    fn validate_server_path(which: u8, path: &str) -> bool {
-        let path = path.trim();
-        if path.is_empty() {
-            return true;
-        }
-        let p = Path::new(path);
-        let name = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => return false,
-        };
-        let expected = match which {
-            0 => "HD2DS.exe",
-            1 => "HD2DS_SabreSquadron.exe",
-            _ => "mpmaplist.txt",
-        };
-        name.eq_ignore_ascii_case(expected) && p.exists()
-    }
-
-    fn server_path_expected_filename(which: u8) -> &'static str {
-        match which {
-            0 => "HD2DS.exe",
-            1 => "HD2DS_SabreSquadron.exe",
-            _ => "mpmaplist.txt",
-        }
     }
 
     fn show_action_bar(&mut self, ui: &mut egui::Ui, webview_active: bool) {
@@ -544,6 +698,30 @@ impl SpectreApp {
                             ui.label(egui::RichText::new("About").size(12.0).color(ui.visuals().weak_text_color()));
                         } else {
                             egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_info"), |ui| ui.label("About"));
+                        }
+                    }
+                    #[cfg(windows)]
+                    if self.tray_icon.is_some() {
+                        let tray_r = ui.allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
+                        let fill = if tray_r.hovered() { ui.visuals().widgets.hovered.bg_fill } else { ui.visuals().widgets.inactive.bg_fill };
+                        ui.painter().rect_filled(tray_r.rect, 4.0, fill);
+                        if let Some(ref t) = self.tray_button_icon {
+                            let r = egui::Rect::from_center_size(tray_r.rect.center(), egui::vec2(ICON_SZ, ICON_SZ));
+                            ui.painter().image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ui.visuals().text_color());
+                        } else {
+                            let galley = ui.painter().layout_no_wrap("▢".to_string(), egui::FontId::new(14.0, egui::FontFamily::Proportional), ui.visuals().text_color());
+                            ui.painter().galley(tray_r.rect.center() - galley.size() / 2.0, galley, ui.visuals().text_color());
+                        }
+                        if tray_r.clicked() {
+                            self.pending_hide_to_tray = true;
+                        }
+                        if tray_r.hovered() {
+                            ui.ctx().output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                            if webview_active {
+                                ui.label(egui::RichText::new("Minimize to tray").size(12.0).color(ui.visuals().weak_text_color()));
+                            } else {
+                                egui::show_tooltip(ui.ctx(), egui::Id::new("action_bar_tray"), |ui| ui.label("Minimize to tray"));
+                            }
                         }
                     }
                     let rest = ui.available_width();
@@ -1089,6 +1267,92 @@ impl SpectreApp {
 
 impl eframe::App for SpectreApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(windows)]
+        {
+            if self.pending_hide_to_tray {
+                if let Some(hwnd) = get_main_window_hwnd(frame) {
+                    use windows::Win32::Foundation::RECT;
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        GetWindowRect, SetWindowPos, HWND_BOTTOM, SWP_NOACTIVATE,
+                    };
+                    let mut rect = RECT::default();
+                    if unsafe { GetWindowRect(hwnd, &mut rect).is_ok() } {
+                        let x = rect.left;
+                        let y = rect.top;
+                        let w = rect.right - rect.left;
+                        let h = rect.bottom - rect.top;
+                        self.saved_tray_rect = Some((x, y, w, h));
+                        let _ = unsafe {
+                            SetWindowPos(
+                                hwnd,
+                                HWND_BOTTOM,
+                                -32000,
+                                -32000,
+                                1,
+                                1,
+                                SWP_NOACTIVATE,
+                            )
+                        };
+                        self.window_hidden_to_tray = true;
+                    }
+                }
+                self.pending_hide_to_tray = false;
+            }
+            if self.window_hidden_to_tray {
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            }
+            if self.splash_screen.is_none() && self.tray_icon.is_none() {
+                if let Some(icon) = load_tray_icon() {
+                    use tray_icon::menu::{Menu, MenuItem};
+                    let show_item = MenuItem::with_id("show", "Show Spectre", true, None);
+                    let show_id = show_item.id().clone();
+                    let quit_item = MenuItem::with_id("quit", "Exit", true, None);
+                    let quit_id = quit_item.id().clone();
+                    let menu = Menu::new();
+                    let _ = menu.append(&show_item);
+                    let _ = menu.append(&quit_item);
+                    match tray_icon::TrayIconBuilder::new()
+                        .with_menu(Box::new(menu))
+                        .with_tooltip("Spectre - HD2 toolkit")
+                        .with_icon(icon)
+                        .build()
+                    {
+                        Ok(tray) => {
+                            self.tray_icon = Some(tray);
+                            self.tray_show_id = Some(show_id);
+                            self.tray_quit_id = Some(quit_id);
+                        }
+                        Err(e) => println!("[Tray] Failed to create tray icon: {}", e),
+                    }
+                }
+            }
+            while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                let is_show = self
+                    .tray_show_id
+                    .as_ref()
+                    .is_some_and(|show_id| event.id.as_ref() == show_id.as_ref());
+                if is_show {
+                    self.window_hidden_to_tray = false;
+                    if let Some(hwnd) = get_main_window_hwnd(frame) {
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            SetForegroundWindow, SetWindowPos, HWND_TOP, SWP_NOACTIVATE,
+                        };
+                        if let Some((x, y, w, h)) = self.saved_tray_rect.take() {
+                            let _ = unsafe {
+                                SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE)
+                            };
+                        }
+                        let _ = unsafe { SetForegroundWindow(hwnd) };
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.request_repaint();
+                } else {
+                    // Exit: custom "quit" item or any other menu click (only Show and Exit in tray)
+                    std::process::exit(0);
+                }
+            }
+        }
+
         if ctx.data_mut(|d| d.get_temp::<()>(egui::Id::new("spectre_open_web_after_wizard")).is_some()) {
             ctx.data_mut(|d| d.remove::<()>(egui::Id::new("spectre_open_web_after_wizard")));
             self.current_module = None;
@@ -1123,6 +1387,11 @@ impl eframe::App for SpectreApp {
                         spectre_core::server::ServerLauncherData::default()
                     });
                 ensure_server_utility_has_defaults(&mut data);
+                if let Ok(pids) = self.server_pids.lock() {
+                    for server in data.servers.iter_mut() {
+                        server.running = pids.contains_key(&server.port);
+                    }
+                }
                 for (i, server) in data.servers.iter_mut().enumerate() {
                     let maps = if server.mpmaplist_path.is_empty() {
                         std::collections::HashMap::new()
@@ -1168,6 +1437,7 @@ impl eframe::App for SpectreApp {
             let html_result = spectre_web::embedded_card_html(
                 &card_name,
                 initial_json.as_deref(),
+                cfg!(debug_assertions),
             );
             if let Ok(html) = html_result {
                 let scale = ctx
@@ -1183,20 +1453,45 @@ impl eframe::App for SpectreApp {
                 };
                 let config_path = server_utility_config_path();
                 let (ipc_tx, ipc_rx) = mpsc::channel();
+                let shared_pids = self.server_pids.clone();
+                let shared_helper_kicked: Option<Arc<Mutex<HashMap<u16, HashSet<String>>>>> = {
+                    #[cfg(windows)]
+                    {
+                        Some(self.helper_kicked.clone())
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        None
+                    }
+                };
+                #[cfg(windows)]
+                let shared_helper_last_slots = self.helper_last_slots.clone();
                 let builder = wry::WebViewBuilder::new_as_child(&*frame)
                     .with_bounds(bounds)
                     .with_ipc_handler({
                         let config_path = config_path.clone();
                         let ipc_tx = ipc_tx.clone();
+                        let shared_pids = shared_pids.clone();
+                        let shared_helper_kicked = shared_helper_kicked.clone();
+                        #[cfg(windows)]
+                        let shared_helper_last_slots = shared_helper_last_slots.clone();
                         move |request: http::Request<String>| {
                             let body = request.body();
-                            println!("[IPC] postMessage received, body_len={}", body.len());
+                            if let Ok(ref msg) = serde_json::from_str::<IpcSaveMessage>(body) {
+                                if msg.action != "get_players" && msg.action != "repaint" {
+                                    println!("[IPC] {} body_len={}", msg.action, body.len());
+                                    let _ = std::io::stdout().flush();
+                                }
+                            }
                             match serde_json::from_str::<IpcSaveMessage>(body) {
                                 Ok(msg) if msg.action == "save" => {
                                     println!("[IPC] Save: {} servers", msg.servers.len());
                                     let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                                         .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
                                     data.servers = msg.servers;
+                                    if let Some(sm) = msg.server_manager {
+                                        data.server_manager = sm;
+                                    }
                                     if let Some(parent) = config_path.parent() {
                                         let _ = std::fs::create_dir_all(parent);
                                     }
@@ -1206,6 +1501,11 @@ impl eframe::App for SpectreApp {
                                         let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                                             .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
                                         ensure_server_utility_has_defaults(&mut data);
+                                        if let Ok(pids) = shared_pids.lock() {
+                                            for server in data.servers.iter_mut() {
+                                                server.running = pids.contains_key(&server.port);
+                                            }
+                                        }
                                         for server in data.servers.iter_mut() {
                                             let maps = if server.mpmaplist_path.is_empty() {
                                                 std::collections::HashMap::new()
@@ -1228,31 +1528,33 @@ impl eframe::App for SpectreApp {
                                 Ok(msg) if msg.action == "start" => {
                                     let idx = msg.server_index.unwrap_or(0);
                                     let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
-                                        Ok(mut data) => {
-                                            let app_config = Config::load();
-                                            if !app_config.server_hd2ds_path.is_empty() {
-                                                data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
+                                        Ok(_data) => match msg.servers.get(idx) {
+                                            Some(server) => {
+                                                let port = server.port;
+                                                spectre_core::ds_launch::start_ds(server).map(|pid| (port, pid))
                                             }
-                                            if !app_config.server_sabresquadron_path.is_empty() {
-                                                data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
-                                            }
-                                            match msg.servers.get(idx) {
-                                                Some(server) => spectre_core::ds_launch::start_ds(&data.server_manager, server),
-                                                None => Err(format!("Invalid server index {}", idx)),
-                                            }
-                                        }
+                                            None => Err(format!("Invalid server index {}", idx)),
+                                        },
                                         Err(e) => Err(e),
                                     };
-                                    if result.is_ok() {
-                                        println!("[IPC] Start server {} OK", idx);
+                                    if let Ok((port, pid)) = &result {
+                                        if let Ok(mut pids) = shared_pids.lock() {
+                                            pids.insert(*port, *pid);
+                                        }
+                                        println!("[IPC] Start server {} OK (port {} pid {})", idx, port, pid);
                                     } else {
                                         println!("[IPC] Start server failed: {:?}", result);
                                     }
-                                    let status = result.map_or_else(|e| e, |()| "Started OK".to_string());
+                                    let status = result.map_or_else(|e| e, |_| "Started OK".to_string());
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "browse_mpmaplist" => {
                                     let status = browse_mpmaplist_with_validation();
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "browse_hd2_dir" => {
+                                    let which = msg.browse_which.as_deref().unwrap_or("hd2ds");
+                                    let status = browse_hd2_exe(which);
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "refresh_mpmaplist" => {
@@ -1274,18 +1576,18 @@ impl eframe::App for SpectreApp {
                                 }
                                 Ok(msg) if msg.action == "start_all" => {
                                     let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
-                                        Ok(mut data) => {
-                                            let app_config = Config::load();
-                                            if !app_config.server_hd2ds_path.is_empty() {
-                                                data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
-                                            }
-                                            if !app_config.server_sabresquadron_path.is_empty() {
-                                                data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
-                                            }
+                                        Ok(_data) => {
                                             let mut errs = Vec::new();
+                                            let mut started = Vec::new();
                                             for server in &msg.servers {
-                                                if let Err(e) = spectre_core::ds_launch::start_ds(&data.server_manager, server) {
-                                                    errs.push(format!("{}: {}", server.name, e));
+                                                match spectre_core::ds_launch::start_ds(server) {
+                                                    Ok(pid) => started.push((server.port, pid)),
+                                                    Err(e) => errs.push(format!("{}: {}", server.name, e)),
+                                                }
+                                            }
+                                            if let Ok(mut pids) = shared_pids.lock() {
+                                                for (port, pid) in started {
+                                                    pids.insert(port, pid);
                                                 }
                                             }
                                             if errs.is_empty() {
@@ -1304,12 +1606,121 @@ impl eframe::App for SpectreApp {
                                     let status = result.map_or_else(|e| e, |()| "All servers started".to_string());
                                     let _ = ipc_tx.send(status);
                                 }
+                                Ok(msg) if msg.action == "stop" => {
+                                    let idx = msg.server_index.unwrap_or(0);
+                                    let status = match msg.servers.get(idx) {
+                                        Some(server) => {
+                                            let port = server.port;
+                                            let mut pids = match shared_pids.lock() {
+                                                Ok(g) => g,
+                                                Err(_) => {
+                                                    let _ = ipc_tx.send("Stop failed (lock)".to_string());
+                                                    return;
+                                                }
+                                            };
+                                            if let Some(&pid) = pids.get(&port) {
+                                                pids.remove(&port);
+                                                if let Some(ref k) = shared_helper_kicked {
+                                                    let _ = k.lock().map(|mut m| m.remove(&port));
+                                                }
+                                                #[cfg(windows)]
+                                                if let Ok(mut last) = shared_helper_last_slots.lock() {
+                                                    last.remove(&port);
+                                                }
+                                                drop(pids);
+                                                if kill_process_by_pid(pid) {
+                                                    println!("[IPC] Stopped server {} (port {} pid {})", idx, port, pid);
+                                                    "Stopped OK".to_string()
+                                                } else {
+                                                    println!("[IPC] Stop: process {} already gone", pid);
+                                                    "Stopped OK".to_string()
+                                                }
+                                            } else {
+                                                "Server not running".to_string()
+                                            }
+                                        }
+                                        None => "Invalid server index".to_string(),
+                                    };
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "stop_all" => {
+                                    let mut pids = match shared_pids.lock() {
+                                        Ok(g) => g,
+                                        Err(_) => {
+                                            let _ = ipc_tx.send("Stop all failed (lock)".to_string());
+                                            return;
+                                        }
+                                    };
+                                    let to_stop: Vec<(u16, u32)> = msg.servers.iter().filter_map(|s| pids.get(&s.port).copied().map(|pid| (s.port, pid))).collect();
+                                    for (port, _) in &to_stop {
+                                        pids.remove(port);
+                                        if let Some(ref k) = shared_helper_kicked {
+                                            let _ = k.lock().map(|mut m| m.remove(port));
+                                        }
+                                        #[cfg(windows)]
+                                        if let Ok(mut last) = shared_helper_last_slots.lock() {
+                                            last.remove(port);
+                                        }
+                                    }
+                                    drop(pids);
+                                    for (_, pid) in &to_stop {
+                                        kill_process_by_pid(*pid);
+                                    }
+                                    println!("[IPC] Stop all: {} processes", to_stop.len());
+                                    let _ = ipc_tx.send("All servers stopped".to_string());
+                                }
+                                Ok(msg) if msg.action == "get_running" => {
+                                    let ports: Vec<u16> = shared_pids.lock().map(|p| p.keys().copied().collect()).unwrap_or_default();
+                                    let status = format!("RUNNING:{}", serde_json::to_string(&ports).unwrap_or_else(|_| "[]".to_string()));
+                                    let _ = ipc_tx.send(status);
+                                }
+                                Ok(msg) if msg.action == "repaint" => {
+                                    let _ = ipc_tx.send("REPAINT".to_string());
+                                }
+                                Ok(msg) if msg.action == "get_players" => {
+                                    let idx = msg.server_index.unwrap_or(0);
+                                    let (status, pid_opt) = match msg.servers.get(idx) {
+                                        Some(server) => {
+                                            let pid = shared_pids.lock().ok().and_then(|p| p.get(&server.port).copied());
+                                            let max_clients = server
+                                                .configs
+                                                .iter()
+                                                .find(|c| c.name == server.current_config)
+                                                .map(|c| c.max_clients as u32)
+                                                .unwrap_or(32);
+                                            let status = match pid {
+                                                Some(pid) => match ds_helper::get_player_count(pid, max_clients) {
+                                                    Some((active, total)) => format!("PLAYERS:{},{}", active, total),
+                                                    None => "PLAYERS:--,--".to_string(),
+                                                },
+                                                None => "PLAYERS:--,--".to_string(),
+                                            };
+                                            (status, pid)
+                                        }
+                                        None => ("PLAYERS:--,--".to_string(), None),
+                                    };
+                                    let _ = ipc_tx.send(status);
+                                    let list_json = match pid_opt {
+                                        Some(pid) => ds_helper::get_player_list(pid)
+                                            .map(|list| {
+                                                let arr: Vec<serde_json::Value> = list
+                                                    .iter()
+                                                    .map(|(n, i)| serde_json::json!({"name": n, "ip": i}))
+                                                    .collect();
+                                                serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
+                                            })
+                                            .unwrap_or_else(|| "[]".to_string()),
+                                        None => "[]".to_string(),
+                                    };
+                                    let _ = ipc_tx.send(format!("PLAYER_LIST:{}", list_json));
+                                }
                                 Ok(_) => {}
                                 Err(e) => {
                                     println!("[IPC] Parse postMessage failed: {}", e);
                                     let _ = ipc_tx.send(format!("Error: {}", e));
                                 }
                             }
+                            let _ = std::io::stdout().flush();
                         }
                     })
                     .with_devtools({
@@ -1352,17 +1763,29 @@ impl eframe::App for SpectreApp {
         #[cfg(windows)]
         if let Some(ref rx) = self.ipc_save_rx {
             if let Ok(status_msg) = rx.try_recv() {
-                let script = format!(
-                    "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
-                    serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
-                );
-                if let Some(ref wv) = self.webview {
-                    if let Err(e) = wv.evaluate_script(&script) {
-                        println!("[IPC] evaluate_script status failed: {}", e);
+                if status_msg == "REPAINT" {
+                    // JS requested repaint after updating DOM (e.g. unsaved indicator); no script to run.
+                    self.webview_repaint_frames = 10;
+                    ctx.request_repaint();
+                } else {
+                    let script = format!(
+                        "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
+                        serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
+                    );
+                    if let Some(ref wv) = self.webview {
+                        if let Err(e) = wv.evaluate_script(&script) {
+                            println!("[IPC] evaluate_script status failed: {}", e);
+                        }
                     }
+                    self.webview_repaint_frames = if status_msg == "Saved OK" || status_msg.starts_with("STATE:")
+                        || status_msg == "Stopped OK" || status_msg == "All servers stopped"
+                    {
+                        15
+                    } else {
+                        3
+                    };
+                    ctx.request_repaint();
                 }
-                self.webview_repaint_frames = 3;
-                ctx.request_repaint();
             }
         }
 
@@ -1370,6 +1793,191 @@ impl eframe::App for SpectreApp {
         if self.webview_repaint_frames > 0 {
             self.webview_repaint_frames = self.webview_repaint_frames.saturating_sub(1);
             ctx.request_repaint();
+            // Invalidate webview every frame so we repaint after async script updates DOM (unsaved indicator, etc.).
+            if let Some(hwnd) = get_webview_hwnd(frame) {
+                use windows::Win32::Foundation::BOOL;
+                use windows::Win32::Graphics::Gdi::InvalidateRect;
+                let _ = unsafe { InvalidateRect(hwnd, None, BOOL(1)) };
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            let now = Instant::now();
+            let should_run = self
+                .last_watchdog_check
+                .map_or(true, |t| now.duration_since(t) >= Duration::from_secs(5));
+            if should_run {
+                self.last_watchdog_check = Some(now);
+                let config_path = server_utility_config_path();
+                if let Ok(data) =
+                    spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                {
+                    if data.server_manager.enable_watchdog {
+                        let dead_ports: Vec<u16> = match self.server_pids.lock() {
+                            Ok(pids) => pids
+                                .iter()
+                                .filter(|(_, &pid)| !process_is_alive(pid))
+                                .map(|(&port, _)| port)
+                                .collect(),
+                            Err(_) => Vec::new(),
+                        };
+                        if !dead_ports.is_empty() {
+                            if let Ok(mut pids) = self.server_pids.lock() {
+                                for port in &dead_ports {
+                                    pids.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut k) = self.helper_kicked.lock() {
+                                for port in &dead_ports {
+                                    k.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut last) = self.helper_last_slots.lock() {
+                                for port in &dead_ports {
+                                    last.remove(port);
+                                }
+                            }
+                            for port in dead_ports {
+                                if let Some(server) = data.servers.iter().find(|s| s.port == port) {
+                                    match spectre_core::ds_launch::start_ds(server) {
+                                        Ok(pid) => {
+                                            if let Ok(mut pids) = self.server_pids.lock() {
+                                                pids.insert(port, pid);
+                                            }
+                                            println!("[Watchdog] Restarted server port {} (pid {})", port, pid);
+                                        }
+                                        Err(e) => println!("[Watchdog] Restart port {} failed: {}", port, e),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if data.server_manager.restart_interval_days > 0 && !data.servers.is_empty() {
+                        let last_restart_path = config_path
+                            .parent()
+                            .map(|p| p.join("last_restart.txt"))
+                            .unwrap_or_else(|| std::path::PathBuf::from("last_restart.txt"));
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or(Duration::ZERO)
+                            .as_secs();
+                        let do_restart = match std::fs::read_to_string(&last_restart_path) {
+                            Ok(s) => {
+                                let then: u64 = s.trim().parse().unwrap_or(0);
+                                then > 0 && now_secs >= then && (now_secs - then) / 86400 >= data.server_manager.restart_interval_days as u64
+                            }
+                            Err(_) => true,
+                        };
+                        if do_restart {
+                            let to_kill: Vec<(u16, u32)> = match self.server_pids.lock() {
+                                Ok(pids) => data
+                                    .servers
+                                    .iter()
+                                    .filter_map(|s| pids.get(&s.port).copied().map(|pid| (s.port, pid)))
+                                    .collect(),
+                                Err(_) => Vec::new(),
+                            };
+                            if let Ok(mut pids) = self.server_pids.lock() {
+                                for (port, _) in &to_kill {
+                                    pids.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut k) = self.helper_kicked.lock() {
+                                for (port, _) in &to_kill {
+                                    k.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut last) = self.helper_last_slots.lock() {
+                                for (port, _) in &to_kill {
+                                    last.remove(port);
+                                }
+                            }
+                            for (_, pid) in &to_kill {
+                                kill_process_by_pid(*pid);
+                            }
+                            std::thread::sleep(Duration::from_secs(2));
+                            for server in &data.servers {
+                                if let Ok(pid) = spectre_core::ds_launch::start_ds(server) {
+                                    if let Ok(mut pids) = self.server_pids.lock() {
+                                        pids.insert(server.port, pid);
+                                    }
+                                    println!("[Watchdog] Timed restart: started {} (port {} pid {})", server.name, server.port, pid);
+                                }
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                            let _ = std::fs::write(&last_restart_path, now_secs.to_string());
+                        }
+                    }
+                    let pids_copy: Vec<(u16, u32)> = match self.server_pids.lock() {
+                        Ok(pids) => pids.iter().map(|(&port, &pid)| (port, pid)).collect(),
+                        Err(_) => Vec::new(),
+                    };
+                    for (port, pid) in pids_copy {
+                        let server = match data.servers.iter().find(|s| s.port == port) {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        let config = match server.configs.iter().find(|c| c.name == server.current_config) {
+                            Some(c) => c,
+                            None => match server.configs.first() {
+                                Some(c) => {
+                                    println!("[DS-Helper] port {}: no profile \"{}\", using \"{}\"", port, server.current_config, c.name);
+                                    let _ = std::io::stdout().flush();
+                                    c
+                                }
+                                None => continue,
+                            },
+                        };
+                        let mut kicked = {
+                            if let Ok(kicked_map) = self.helper_kicked.lock() {
+                                kicked_map.get(&port).cloned().unwrap_or_default()
+                            } else {
+                                continue;
+                            }
+                        };
+                        let previous_slots = self
+                            .helper_last_slots
+                            .lock()
+                            .ok()
+                            .and_then(|m| m.get(&port).cloned());
+                        let log_cb = self.log_state.as_ref().map(|state| {
+                            let state = state.clone();
+                            Box::new(move |msg: &str| write_app_log(&state, msg)) as Box<dyn Fn(&str)>
+                        });
+                        let log_ref = log_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(&str));
+                        match ds_helper::enforce_player_lists(
+                            pid,
+                            port,
+                            config,
+                            &data.server_manager,
+                            &mut kicked,
+                            previous_slots.as_deref(),
+                            log_ref,
+                        ) {
+                            Ok(current_slots) => {
+                                if let Ok(mut last) = self.helper_last_slots.lock() {
+                                    last.insert(port, current_slots);
+                                }
+                            }
+                            Err(e) => {
+                                let line = format!("[Helper] port {}: {}", port, e);
+                                println!("{}", line);
+                                if let Some(ref state) = self.log_state {
+                                    write_app_log(state, &line);
+                                }
+                            }
+                        }
+                        if let Ok(mut kicked_map) = self.helper_kicked.lock() {
+                            kicked_map.insert(port, kicked);
+                        }
+                    }
+                }
+            }
         }
 
         if !self.window_centered && self.center_attempts < 15 {
@@ -1517,70 +2125,8 @@ impl eframe::App for SpectreApp {
                     
                     ui.add_space(15.0);
                     ui.separator();
-                    ui.add_space(10.0);
-
-                    ui.label(egui::RichText::new("Server Utility").size(14.0).strong());
-                    ui.label("Paths used by the Server Utility. Configs are saved in content/server_utility.");
-                    let paths_enabled = self.config.server_utility_wizard_completed;
-                    if !paths_enabled {
-                        ui.colored_label(
-                            ui.visuals().weak_text_color(),
-                            "Complete the Server Utility first-time setup (open Server Utility and finish the wizard) to edit paths.",
-                        );
-                        ui.add_space(4.0);
-                    }
-                    ui.add_space(8.0);
-                    const PATH_INPUT_WIDTH: f32 = 400.0;
-                    ui.label("HD2DS.exe path:");
-                    ui.horizontal(|ui| {
-                        ui.add_enabled(
-                            paths_enabled,
-                            egui::TextEdit::singleline(&mut self.config.server_hd2ds_path)
-                                .desired_width(PATH_INPUT_WIDTH),
-                        );
-                        if ui.add_enabled(paths_enabled, egui::Button::new("📁 Browse…")).clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Executable", &["exe"]).pick_file() {
-                                self.config.server_hd2ds_path = p.to_string_lossy().into_owned();
-                            }
-                        }
-                    });
-                    let valid_hd2ds = Self::validate_server_path(0, &self.config.server_hd2ds_path);
-                    if !valid_hd2ds && !self.config.server_hd2ds_path.trim().is_empty() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 80, 80),
-                            format!("Must be a file named \"{}\" that exists.", Self::server_path_expected_filename(0)),
-                        );
-                    }
-                    ui.label("HD2DS Sabre Squadron path:");
-                    ui.horizontal(|ui| {
-                        ui.add_enabled(
-                            paths_enabled,
-                            egui::TextEdit::singleline(&mut self.config.server_sabresquadron_path)
-                                .desired_width(PATH_INPUT_WIDTH),
-                        );
-                        if ui.add_enabled(paths_enabled, egui::Button::new("📁 Browse…")).clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Executable", &["exe"]).pick_file() {
-                                self.config.server_sabresquadron_path = p.to_string_lossy().into_owned();
-                            }
-                        }
-                    });
-                    let valid_sabre = Self::validate_server_path(1, &self.config.server_sabresquadron_path);
-                    if !valid_sabre && !self.config.server_sabresquadron_path.trim().is_empty() {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 80, 80),
-                            format!("Must be a file named \"{}\" that exists.", Self::server_path_expected_filename(1)),
-                        );
-                    }
-
-                    ui.add_space(15.0);
-                    ui.separator();
 
                     if ui.button("Close").clicked() {
-                        if self.config.server_hd2ds_path.trim().is_empty()
-                            || self.config.server_sabresquadron_path.trim().is_empty()
-                        {
-                            self.config.server_utility_wizard_completed = false;
-                        }
                         self.config.save();
                         println!("[DEBUG] Options dialog closed");
                         self.show_options = false;
@@ -1735,6 +2281,10 @@ impl eframe::App for SpectreApp {
             self.current_module = None;
             self.config = Config::load();
         }
+
+        // Keep updating when window is not focused (e.g. on second monitor) so server status,
+        // player count, and webview content stay current.
+        ctx.request_repaint_after(Duration::from_millis(250));
     }
 }
 

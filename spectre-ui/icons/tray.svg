@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Window (top) -->
+  <path d="M5 4h14v7H5z" fill="#ffffff"/>
+  <!-- Down arrow to tray -->
+  <path d="M12 12l-4 4h3v3h2v-3h3l-4-4z" fill="#ffffff"/>
+  <!-- Tray bar (bottom) -->
+  <path d="M4 20h16v2H4z" fill="#ffffff"/>
+</svg>

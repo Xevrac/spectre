@@ -15,7 +15,7 @@ use std::time::Instant;
 const CONFIGS_DIR: &str = "content/server_utility";
 const CONFIG_FILENAME: &str = "hd2_server_config.json";
 
-const WIZARD_STEPS: usize = 3;
+const WIZARD_STEPS: usize = 1;
 
 pub struct ServerLauncher {
     data: ServerLauncherData,
@@ -83,8 +83,6 @@ impl Default for ServerLauncher {
         let config_path = format!("{}/{}", CONFIGS_DIR, CONFIG_FILENAME);
         let mut data = ServerLauncherData::load_from_file(Path::new(&config_path))
             .unwrap_or_else(|_| ServerLauncherData::default());
-        data.server_manager.hd2ds_path = app_config.server_hd2ds_path.clone();
-        data.server_manager.hd2ds_sabresquadron_path = app_config.server_sabresquadron_path.clone();
 
         if data.servers.is_empty() {
             let mut server = Server::default();
@@ -98,10 +96,7 @@ impl Default for ServerLauncher {
             server.configs.push(default_config);
             data.servers.push(server);
         }
-        let paths_empty = app_config.server_hd2ds_path.trim().is_empty()
-            || app_config.server_sabresquadron_path.trim().is_empty();
-        let show_first_time_wizard =
-            !app_config.server_utility_wizard_completed || paths_empty;
+        let show_first_time_wizard = !app_config.server_utility_wizard_completed;
         let directplay_from_config = app_config.directplay_detected;
         let directplay_detection_result = if directplay_from_config {
             println!("[DEBUG] DirectPlay: loaded from config (previously detected as enabled)");
@@ -145,15 +140,8 @@ impl Module for ServerLauncher {
         }
 
         self.config = Config::load();
-        if !self.show_first_time_wizard {
-            self.data.server_manager.hd2ds_path = self.config.server_hd2ds_path.clone();
-            self.data.server_manager.hd2ds_sabresquadron_path =
-                self.config.server_sabresquadron_path.clone();
-            let paths_empty = self.config.server_hd2ds_path.trim().is_empty()
-                || self.config.server_sabresquadron_path.trim().is_empty();
-            if !self.config.server_utility_wizard_completed || paths_empty {
-                self.show_first_time_wizard = true;
-            }
+        if !self.show_first_time_wizard && !self.config.server_utility_wizard_completed {
+            self.show_first_time_wizard = true;
         }
 
         if self.show_first_time_wizard {
@@ -162,48 +150,13 @@ impl Module for ServerLauncher {
         }
 
         ui.label(
-            egui::RichText::new("Server Utility is available as a web interface on Windows. Use the first-time setup when paths are empty.")
+            egui::RichText::new("Server Utility is available as a web interface on Windows. Use the first-time setup to configure prerequisites.")
                 .color(ui.visuals().weak_text_color()),
         );
     }
 }
 
-fn strip_windows_long_path_prefix(path: &str) -> String {
-    let path = path.trim();
-    if path.starts_with(r"\\?\") {
-        if path.starts_with(r"\\?\UNC\") {
-            path.replacen(r"\\?\UNC\", r"\\", 1)
-        } else {
-            path.replacen(r"\\?\", "", 1)
-        }
-    } else {
-        path.to_string()
-    }
-}
-
 impl ServerLauncher {
-    fn validate_wizard_step(step: usize, path: &str) -> bool {
-        let path = strip_windows_long_path_prefix(path);
-        let path = path.trim();
-        if path.is_empty() {
-            return false;
-        }
-        let p = Path::new(&path);
-        let name = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => return false,
-        };
-        let expected = match step {
-            0 => "HD2DS.exe",
-            1 => "HD2DS_SabreSquadron.exe",
-            _ => "HD2DS_SabreSquadron.exe",
-        };
-        if !name.eq_ignore_ascii_case(expected) {
-            return false;
-        }
-        p.exists() || p.canonicalize().is_ok()
-    }
-
     fn show_first_time_wizard_dialog(&mut self, ctx: &egui::Context) {
         const WIZARD_WIDTH: f32 = 520.0;
         const WIZARD_HEIGHT: f32 = 420.0;
@@ -214,12 +167,6 @@ impl ServerLauncher {
 
         let step = self.first_time_wizard_step.min(WIZARD_STEPS.saturating_sub(1));
 
-        let path_step = step.saturating_sub(1);
-        let path_for_validation = match step {
-            1 => self.data.server_manager.hd2ds_path.as_str(),
-            2 => self.data.server_manager.hd2ds_sabresquadron_path.as_str(),
-            _ => "",
-        };
         const PREREQ_CACHE_TTL_SECS: u64 = 2;
         let (registry_ok_cached, hosts_ok_cached) = if step == 0 {
             let now = Instant::now();
@@ -241,34 +188,8 @@ impl ServerLauncher {
         };
 
         let directplay_ok = step == 0 && self.directplay_detection_result == Some(true);
-        let step_valid = if step == 0 {
-            directplay_ok && registry_ok_cached && hosts_ok_cached
-        } else {
-            Self::validate_wizard_step(path_step, path_for_validation)
-        };
-        let expected_filename = match step {
-            1 => "HD2DS.exe",
-            2 => "HD2DS_SabreSquadron.exe",
-            _ => "",
-        };
+        let step_valid = directplay_ok && registry_ok_cached && hosts_ok_cached;
 
-        let (label, path_ref, filter_ext, use_folder): (&str, _, &[&str], bool) = match step {
-            1 => (
-                "HD2DS.exe path:",
-                &mut self.data.server_manager.hd2ds_path,
-                &["exe"][..],
-                false,
-            ),
-            2 => (
-                "HD2DS Sabre Squadron path:",
-                &mut self.data.server_manager.hd2ds_sabresquadron_path,
-                &["exe"][..],
-                false,
-            ),
-            _ => ("", &mut self.data.server_manager.hd2ds_path, &["exe"][..], false),
-        };
-
-        let mut browse_clicked = false;
         let mut next_clicked = false;
         let mut back_clicked = false;
         let mut finish_clicked = false;
@@ -538,35 +459,6 @@ impl ServerLauncher {
                     }
 
                     ui.add_space(16.0);
-                } else {
-                    ui.label("Set the following paths. You can change them later in Settings > Server Utility.");
-                    ui.add_space(12.0);
-                    ui.label(label);
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            egui::vec2(ui.available_width() - 90.0, 24.0),
-                            egui::TextEdit::singleline(path_ref).desired_width(f32::INFINITY),
-                        );
-                        if ui.button("📁 Browse…").clicked() {
-                            browse_clicked = true;
-                        }
-                    });
-                    if !step_valid && !path_ref.trim().is_empty() {
-                        ui.add_space(4.0);
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 80, 80),
-                            format!(
-                                "Must be a file named \"{}\" that exists.",
-                                expected_filename
-                            ),
-                        );
-                    } else if !step_valid {
-                        ui.add_space(4.0);
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 80, 80),
-                            format!("Select a file named \"{}\".", expected_filename),
-                        );
-                    }
                 }
 
                 ui.add_space(16.0);
@@ -619,28 +511,6 @@ impl ServerLauncher {
             self.hosts_elevate_rx = Some(rx);
         }
 
-        if browse_clicked {
-            let chosen = if use_folder {
-                rfd::FileDialog::new().pick_folder()
-            } else {
-                rfd::FileDialog::new()
-                    .add_filter("", filter_ext)
-                    .pick_file()
-            };
-            if let Some(p) = chosen {
-                let s = p
-                    .canonicalize()
-                    .map(|c| c.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| p.to_string_lossy().into_owned());
-                let s = strip_windows_long_path_prefix(s.trim());
-                match step {
-                    1 => self.data.server_manager.hd2ds_path = s,
-                    2 => self.data.server_manager.hd2ds_sabresquadron_path = s,
-                    _ => {}
-                }
-                ctx.request_repaint();
-            }
-        }
         if back_clicked {
             self.first_time_wizard_step = step.saturating_sub(1);
         }
@@ -648,9 +518,6 @@ impl ServerLauncher {
             self.first_time_wizard_step = (step + 1).min(WIZARD_STEPS.saturating_sub(1));
         }
         if finish_clicked {
-            self.config.server_hd2ds_path = self.data.server_manager.hd2ds_path.clone();
-            self.config.server_sabresquadron_path = self.data.server_manager.hd2ds_sabresquadron_path
-                .clone();
             self.config.server_utility_wizard_completed = true;
             self.config.save();
             let _ = self.data.save_to_file(Path::new(&self.config_path));

@@ -1,4 +1,6 @@
-use crate::server::{Server, ServerConfig, ServerManager};
+//! HD2 dedicated server script builder.
+
+use crate::server::{Server, ServerConfig};
 use std::path::Path;
 use std::process::Command;
 
@@ -14,9 +16,13 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     }
     add(&mut lines, format!("domain {}", config.domain.to_lowercase()));
     add(&mut lines, "dedicated 1".to_string());
-    add(&mut lines, format!("port {}", server.port));
+    if config.domain.to_lowercase() != "local" {
+        add(&mut lines, format!("port {}", server.port));
+    }
     add(&mut lines, format!("password \"{}\"", config.password));
-    add(&mut lines, format!("adminpass \"{}\"", config.admin_pass));
+    if !config.admin_pass.is_empty() {
+        add(&mut lines, format!("adminpass \"{}\"", config.admin_pass));
+    }
     add(&mut lines, format!("maxclients {}", config.max_clients));
     add(&mut lines, format!("pointlimit {}", config.point_limit));
     add(&mut lines, format!("roundlimit {}", config.round_limit));
@@ -89,23 +95,25 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     } else {
         add(&mut lines, "teamlives 0".to_string());
     }
-    match config.voice_chat {
-        0 => add(&mut lines, "voicechat none".to_string()),
-        1 => add(&mut lines, "voicechat vr12".to_string()),
-        2 => add(&mut lines, "voicechat sc03".to_string()),
-        3 => add(&mut lines, "voicechat sc06".to_string()),
-        4 => add(&mut lines, "voicechat truespeech".to_string()),
-        5 => add(&mut lines, "voicechat gsm".to_string()),
-        6 => add(&mut lines, "voicechat adpcm".to_string()),
-        7 => add(&mut lines, "voicechat pcm".to_string()),
-        _ => add(&mut lines, "voicechat none".to_string()),
+    if config.voice_chat != 0 {
+        let voice = match config.voice_chat {
+            1 => "vr12",
+            2 => "sc03",
+            3 => "sc06",
+            4 => "truespeech",
+            5 => "gsm",
+            6 => "adpcm",
+            7 => "pcm",
+            _ => "none",
+        };
+        add(&mut lines, format!("voicechat {}", voice));
     }
     add(&mut lines, "server".to_string());
 
     lines
 }
 
-/// Write script lines to a file next to the DS exe. `commands_basename` is the file name only (e.g. spectre_ds_commands_22000.txt).
+/// Write script lines to a file next to the DS exe.
 pub fn write_script_to_ds_dir(script: &[String], ds_exe_path: &Path, commands_basename: &str) -> Result<std::path::PathBuf, String> {
     let parent = ds_exe_path
         .parent()
@@ -117,18 +125,18 @@ pub fn write_script_to_ds_dir(script: &[String], ds_exe_path: &Path, commands_ba
     Ok(target)
 }
 
-/// DS exe path (HD2DS vs Sabre Squadron) from manager and server choice.
-fn get_ds_exe_path<'a>(manager: &'a ServerManager, server: &Server) -> Result<&'a str, String> {
+/// DS exe path (HD2DS vs Sabre Squadron) from this server's per-server paths.
+fn get_ds_exe_path(server: &Server) -> Result<&str, String> {
     let path = if server.use_sabre_squadron {
-        manager.hd2ds_sabresquadron_path.as_str()
+        server.hd2ds_sabresquadron_path.as_str()
     } else {
-        manager.hd2ds_path.as_str()
+        server.hd2ds_path.as_str()
     };
     if path.is_empty() {
         return Err(if server.use_sabre_squadron {
-            "HD2DS Sabre Squadron path is not set".to_string()
+            "HD2DS Sabre Squadron path is not set for this server".to_string()
         } else {
-            "HD2DS path is not set".to_string()
+            "HD2DS path is not set for this server".to_string()
         });
     }
     Ok(path)
@@ -163,8 +171,9 @@ fn get_current_config(server: &Server) -> Result<&ServerConfig, String> {
 
 /// Deploy config next to DS exe and start the DS process with -cmd -exec (working dir = exe dir).
 /// Each server uses a separate commands file (by port) so multiple servers can run.
-pub fn start_ds(manager: &ServerManager, server: &Server) -> Result<(), String> {
-    let exe_path = get_ds_exe_path(manager, server)?;
+/// Returns the new process ID on success (process is detached).
+pub fn start_ds(server: &Server) -> Result<u32, String> {
+    let exe_path = get_ds_exe_path(server)?;
     let path = Path::new(exe_path);
     if !path.exists() {
         return Err(format!("DS exe not found: {}", exe_path));
@@ -186,12 +195,13 @@ pub fn start_ds(manager: &ServerManager, server: &Server) -> Result<(), String> 
         .ok_or_else(|| "DS exe has no parent dir".to_string())?;
     let exe_os: std::ffi::OsString = path.as_os_str().to_owned();
 
-    let _child = Command::new(&exe_os)
+    let child = Command::new(&exe_os)
         .current_dir(parent)
         .args(["-cmd", "-exec", &commands_basename])
         .spawn()
         .map_err(|e| format!("Failed to start DS process: {}", e))?;
-    Ok(())
+    let pid = child.id();
+    Ok(pid)
 }
 
 #[cfg(test)]
@@ -210,6 +220,10 @@ mod tests {
         let script = build_ds_script(&server, &config);
         assert!(!script.is_empty());
         assert!(script.iter().any(|s| s.contains("sessionname")));
-        assert!(script.iter().any(|s| s.contains("port 22000")));
+        // Default domain is "local" -> port line is omitted
+        assert!(!script.iter().any(|s| s.starts_with("port ")));
+        config.domain = "internet".to_string();
+        let script_inet = build_ds_script(&server, &config);
+        assert!(script_inet.iter().any(|s| s.contains("port 22000")));
     }
 }

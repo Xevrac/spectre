@@ -11,6 +11,8 @@ pub struct ServerManager {
     pub hd2ds_sabresquadron_path: String,
     pub enable_watchdog: bool,
     pub watchdog_interval: u32,
+    #[serde(default)]
+    pub restart_interval_days: u32,
     pub enable_messaging: bool,
     pub messaging_interval: u32,
     pub enable_reboot: bool,
@@ -19,6 +21,9 @@ pub struct ServerManager {
     pub forced_messages: Vec<String>,
     pub enable_forced_ban_list: bool,
     pub forced_ban_list: Vec<String>,
+    /// Rotate (clear) app log file after this many days to save space. 0 = no rotation.
+    #[serde(default)]
+    pub log_rotation_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +66,12 @@ pub struct ServerConfig {
     pub voice_chat: u8,
     pub maps: Vec<String>,
     pub messages: Vec<String>,
+    #[serde(alias = "banList")]
     pub ban_list: Vec<String>,
+    #[serde(default)]
+    pub enable_whitelist: bool,
+    #[serde(default)]
+    pub whitelist: Vec<String>,
     pub enable_auto_kick: bool,
     pub clan_tag: String,
     pub clan_side: String,
@@ -77,6 +87,10 @@ pub struct Server {
     pub users: Vec<String>,
     pub port: u16,
     pub use_sabre_squadron: bool,
+    #[serde(default)]
+    pub hd2ds_path: String,
+    #[serde(default)]
+    pub hd2ds_sabresquadron_path: String,
     #[serde(default)]
     pub mpmaplist_path: String,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -101,6 +115,7 @@ impl Default for ServerManager {
             hd2ds_sabresquadron_path: String::new(),
             enable_watchdog: true,
             watchdog_interval: 15,
+            restart_interval_days: 0,
             enable_messaging: true,
             messaging_interval: 180,
             enable_reboot: false,
@@ -109,6 +124,7 @@ impl Default for ServerManager {
             forced_messages: Vec::new(),
             enable_forced_ban_list: true,
             forced_ban_list: Vec::new(),
+            log_rotation_days: 0,
         }
     }
 }
@@ -117,36 +133,38 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
-            domain: "Internet".to_string(),
-            style: "Cooperative".to_string(),
+            domain: "local".to_string(),
+            style: "Objectives".to_string(),
             session_name: "A Spectre Session".to_string(),
-            max_clients: 64,
+            max_clients: 32,
             point_limit: 0,
-            round_limit: 25,
-            round_count: 1,
-            respawn_time: 20,
-            spawn_protection: 0,
+            round_limit: 5,
+            round_count: 3,
+            respawn_time: 3,
+            spawn_protection: 5,
             warmup: 10,
-            inverse_damage: 0,
+            inverse_damage: 100,
             friendly_fire: true,
-            auto_team_balance: false,
+            auto_team_balance: true,
             third_person_view: false,
             allow_crosshair: true,
             falling_dmg: true,
-            allow_respawn: true,
+            allow_respawn: false,
             allow_vehicles: true,
             difficulty: "Hard".to_string(),
-            respawn_number: 1,
-            team_respawn: false,
+            respawn_number: 0,
+            team_respawn: true,
             password: String::new(),
             admin_pass: String::new(),
             max_ping: 0,
-            max_freq: 0,
+            max_freq: 50,
             max_inactivity: 0,
             voice_chat: 0,
-            maps: Vec::new(),
+            maps: vec!["Alps3".to_string()],
             messages: Vec::new(),
             ban_list: Vec::new(),
+            enable_whitelist: false,
+            whitelist: Vec::new(),
             enable_auto_kick: false,
             clan_tag: String::new(),
             clan_side: "axis".to_string(),
@@ -165,6 +183,8 @@ impl Default for Server {
             users: Vec::new(),
             port: 22000,
             use_sabre_squadron: true,
+            hd2ds_path: String::new(),
+            hd2ds_sabresquadron_path: String::new(),
             mpmaplist_path: String::new(),
             available_maps_by_style: HashMap::new(),
             current_config: String::new(),
@@ -175,13 +195,26 @@ impl Default for Server {
 
 impl ServerLauncherData {
     /// Load config from JSON; default if missing.
+    /// Migrates legacy manager-level paths onto each server if the server's paths are empty.
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
         if !path.exists() {
             return Ok(Self::default());
         }
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        serde_json::from_str(&content).map_err(|e| format!("Invalid config JSON: {}", e))
+        let mut data: ServerLauncherData =
+            serde_json::from_str(&content).map_err(|e| format!("Invalid config JSON: {}", e))?;
+        for server in &mut data.servers {
+            if server.hd2ds_path.trim().is_empty() && !data.server_manager.hd2ds_path.trim().is_empty() {
+                server.hd2ds_path = data.server_manager.hd2ds_path.clone();
+            }
+            if server.hd2ds_sabresquadron_path.trim().is_empty()
+                && !data.server_manager.hd2ds_sabresquadron_path.trim().is_empty()
+            {
+                server.hd2ds_sabresquadron_path = data.server_manager.hd2ds_sabresquadron_path.clone();
+            }
+        }
+        Ok(data)
     }
 
     /// Save config as pretty-printed JSON.
