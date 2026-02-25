@@ -77,7 +77,7 @@ impl ServerLauncher {
 impl Default for ServerLauncher {
     fn default() -> Self {
         if let Err(e) = fs::create_dir_all(CONFIGS_DIR) {
-            println!("[DEBUG] Could not create configs dir {}: {}", CONFIGS_DIR, e);
+            println!("[Spectre.dbg] Could not create configs dir {}: {}", CONFIGS_DIR, e);
         }
         let app_config = Config::load();
         let config_path = format!("{}/{}", CONFIGS_DIR, CONFIG_FILENAME);
@@ -99,7 +99,7 @@ impl Default for ServerLauncher {
         let show_first_time_wizard = !app_config.server_utility_wizard_completed;
         let directplay_from_config = app_config.directplay_detected;
         let directplay_detection_result = if directplay_from_config {
-            println!("[DEBUG] DirectPlay: loaded from config (previously detected as enabled)");
+            println!("[Spectre.dbg] DirectPlay: loaded from config (previously detected as enabled)");
             Some(true)
         } else {
             None
@@ -216,8 +216,8 @@ impl ServerLauncher {
                     if let Some(rx) = &self.registry_elevate_rx {
                         if let Ok(result) = rx.try_recv() {
                             match &result {
-                                Ok(()) => println!("[DEBUG] Prereqs: registry fix elevated process succeeded"),
-                                Err(e) => println!("[DEBUG] Prereqs: registry fix elevated process failed: {}", e),
+                                Ok(()) => println!("[Spectre.dbg] Prereqs: registry fix elevated process succeeded"),
+                                Err(e) => println!("[Spectre.dbg] Prereqs: registry fix elevated process failed: {}", e),
                             }
                             self.registry_fix_error = result.err();
                             self.registry_elevate_rx = None;
@@ -228,8 +228,8 @@ impl ServerLauncher {
                     if let Some(rx) = &self.hosts_elevate_rx {
                         if let Ok(result) = rx.try_recv() {
                             match &result {
-                                Ok(()) => println!("[DEBUG] Prereqs: GameSpy hosts elevated process succeeded"),
-                                Err(e) => println!("[DEBUG] Prereqs: GameSpy hosts elevated process failed: {}", e),
+                                Ok(()) => println!("[Spectre.dbg] Prereqs: GameSpy hosts elevated process succeeded"),
+                                Err(e) => println!("[Spectre.dbg] Prereqs: GameSpy hosts elevated process failed: {}", e),
                             }
                             self.hosts_fix_error = result.err();
                             self.hosts_elevate_rx = None;
@@ -244,13 +244,13 @@ impl ServerLauncher {
                             self.directplay_detection_result = result.ok();
                             match &self.directplay_detection_result {
                                 Some(true) => {
-                                    println!("[DEBUG] DirectPlay: detection result=enabled, saving to config (bound to this machine)");
+                                    println!("[Spectre.dbg] DirectPlay: detection result=enabled, saving to config (bound to this machine)");
                                     self.config.directplay_detected = true;
                                     self.config.machine_id = Some(crate::config::get_machine_id());
                                     self.config.save();
                                 }
-                                Some(false) => println!("[DEBUG] DirectPlay: detection result=disabled"),
-                                None => println!("[DEBUG] DirectPlay: detection failed ({})", self.directplay_error.as_deref().unwrap_or("unknown")),
+                                Some(false) => println!("[Spectre.dbg] DirectPlay: detection result=disabled"),
+                                None => println!("[Spectre.dbg] DirectPlay: detection failed ({})", self.directplay_error.as_deref().unwrap_or("unknown")),
                             }
                         }
                     }
@@ -259,13 +259,13 @@ impl ServerLauncher {
                             self.directplay_install_rx = None;
                             self.directplay_error = result.as_ref().err().cloned();
                             if result.is_ok() {
-                                println!("[DEBUG] DirectPlay: install succeeded, saving to config (bound to this machine)");
+                                println!("[Spectre.dbg] DirectPlay: install succeeded, saving to config (bound to this machine)");
                                 self.directplay_detection_result = Some(true);
                                 self.config.directplay_detected = true;
                                 self.config.machine_id = Some(crate::config::get_machine_id());
                                 self.config.save();
                             } else {
-                                println!("[DEBUG] DirectPlay: install failed ({})", self.directplay_error.as_deref().unwrap_or("unknown"));
+                                println!("[Spectre.dbg] DirectPlay: install failed ({})", self.directplay_error.as_deref().unwrap_or("unknown"));
                             }
                         }
                     }
@@ -321,7 +321,7 @@ impl ServerLauncher {
                         match self.directplay_detection_result {
                             None => {
                                 if ui.button("Run detection").on_hover_text("Runs as administrator to detect DirectPlay.").clicked() {
-                                    println!("[DEBUG] DirectPlay: user clicked Run detection");
+                                    println!("[Spectre.dbg] DirectPlay: user clicked Run detection");
                                     self.directplay_error = None;
                                     let (tx, rx) = mpsc::channel();
                                     let path = std::env::temp_dir().join("spectre_directplay_check.txt");
@@ -330,14 +330,14 @@ impl ServerLauncher {
                                 }
                                 #[cfg(debug_assertions)]
                                 if ui.button("Emulate: not found").on_hover_text("Debug: simulate DirectPlay not installed (no UAC, config not saved).").clicked() {
-                                    println!("[DEBUG] DirectPlay: user clicked Emulate not found (debug)");
+                                    println!("[Spectre.dbg] DirectPlay: user clicked Emulate not found (debug)");
                                     self.directplay_error = None;
                                     self.directplay_detection_result = Some(false);
                                 }
                             }
                             Some(false) => {
                                 if ui.button("Install DirectPlay").on_hover_text("Runs as administrator to enable DirectPlay.").clicked() {
-                                    println!("[DEBUG] DirectPlay: user clicked Install DirectPlay");
+                                    println!("[Spectre.dbg] DirectPlay: user clicked Install DirectPlay");
                                     self.directplay_error = None;
                                     let (tx, rx) = mpsc::channel();
                                     spawn_elevated_install_directplay(tx);
@@ -493,7 +493,7 @@ impl ServerLauncher {
             });
 
         if apply_registry_clicked {
-            println!("[DEBUG] Prereqs: user clicked Apply network fix, spawning elevated process");
+            println!("[Spectre.dbg] Prereqs: user clicked Apply network fix, spawning elevated process");
             self.registry_fix_error = None;
             self.prereq_cache = None;
             self.prereq_cache_time = None;
@@ -502,7 +502,7 @@ impl ServerLauncher {
             self.registry_elevate_rx = Some(rx);
         }
         if apply_hosts_clicked {
-            println!("[DEBUG] Prereqs: user clicked Add GameSpy hosts, spawning elevated process");
+            println!("[Spectre.dbg] Prereqs: user clicked Add GameSpy hosts, spawning elevated process");
             self.hosts_fix_error = None;
             self.prereq_cache = None;
             self.prereq_cache_time = None;

@@ -5,20 +5,9 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerManager {
-    pub server_ip: String,
-    pub server_port: u16,
-    pub hd2ds_path: String,
-    pub hd2ds_sabresquadron_path: String,
     pub enable_watchdog: bool,
-    pub watchdog_interval: u32,
     #[serde(default)]
     pub restart_interval_days: u32,
-    pub enable_messaging: bool,
-    pub messaging_interval: u32,
-    pub enable_reboot: bool,
-    pub reboot_interval: u32,
-    pub enable_forced_messages: bool,
-    pub forced_messages: Vec<String>,
     pub enable_forced_ban_list: bool,
     pub forced_ban_list: Vec<String>,
     /// Rotate (clear) app log file after this many days to save space. 0 = no rotation.
@@ -109,19 +98,8 @@ pub struct ServerLauncherData {
 impl Default for ServerManager {
     fn default() -> Self {
         Self {
-            server_ip: "10.0.0.1".to_string(),
-            server_port: 2332,
-            hd2ds_path: String::new(),
-            hd2ds_sabresquadron_path: String::new(),
             enable_watchdog: true,
-            watchdog_interval: 15,
             restart_interval_days: 0,
-            enable_messaging: true,
-            messaging_interval: 180,
-            enable_reboot: false,
-            reboot_interval: 48,
-            enable_forced_messages: false,
-            forced_messages: Vec::new(),
             enable_forced_ban_list: true,
             forced_ban_list: Vec::new(),
             log_rotation_days: 0,
@@ -202,18 +180,8 @@ impl ServerLauncherData {
         }
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        let mut data: ServerLauncherData =
+        let data: ServerLauncherData =
             serde_json::from_str(&content).map_err(|e| format!("Invalid config JSON: {}", e))?;
-        for server in &mut data.servers {
-            if server.hd2ds_path.trim().is_empty() && !data.server_manager.hd2ds_path.trim().is_empty() {
-                server.hd2ds_path = data.server_manager.hd2ds_path.clone();
-            }
-            if server.hd2ds_sabresquadron_path.trim().is_empty()
-                && !data.server_manager.hd2ds_sabresquadron_path.trim().is_empty()
-            {
-                server.hd2ds_sabresquadron_path = data.server_manager.hd2ds_sabresquadron_path.clone();
-            }
-        }
         Ok(data)
     }
 

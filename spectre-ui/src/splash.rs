@@ -29,7 +29,7 @@ impl SplashScreen {
 
 impl SplashScreen {
     pub fn new(ctx: &egui::Context) -> Self {
-        println!("[DEBUG] Initializing splash screen...");
+        println!("[Spectre.dbg] Initializing splash screen...");
         let mut splash = Self {
             start_time: Instant::now(),
             banner_texture: None,
@@ -38,7 +38,7 @@ impl SplashScreen {
         };
         
         splash.load_banner(ctx);
-        println!("[DEBUG] Splash screen initialized (fade: {}ms, show: {}ms)", 
+        println!("[Spectre.dbg] Splash screen initialized (fade: {}ms, show: {}ms)", 
                  splash.fade_duration.as_millis(), splash.show_duration.as_millis());
         splash
     }
@@ -51,12 +51,12 @@ impl SplashScreen {
             let size = [rgba.width() as usize, rgba.height() as usize];
             let pixels = rgba.as_flat_samples();
             
-            println!("[DEBUG] Banner image loaded: {}x{}", size[0], size[1]);
+            println!("[Spectre.dbg] Banner image loaded: {}x{}", size[0], size[1]);
             let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
             self.banner_texture = Some(ctx.load_texture("banner", color_image, Default::default()));
-            println!("[DEBUG] Banner texture created");
+            println!("[Spectre.dbg] Banner texture created");
         } else {
-            println!("[DEBUG] Warning: Failed to load banner image from embedded bytes");
+            println!("[Spectre.dbg] Warning: Failed to load banner image from embedded bytes");
         }
     }
     

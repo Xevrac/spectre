@@ -53,16 +53,26 @@ fn server_utility_config_path() -> std::path::PathBuf {
         .join("hd2_server_config.json")
 }
 
-/// Path to the app log file (next to the executable). Used for DS-Helper and DS events.
-/// TODO: Logging will capture the server stdout in a future release.
+/// Path to the app log file in content/server_utility. Prefer canonical exe path so it is absolute.
 #[cfg(windows)]
-fn app_log_path(config_path: &std::path::Path) -> std::path::PathBuf {
-    config_path
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .unwrap_or_else(|| config_path.as_ref())
-        .join("spectre_app.log")
+fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf {
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            std::fs::canonicalize(&p).ok().or(Some(p)).and_then(|p| {
+                p.parent().map(|d| d.join("content").join("server_utility").join("spectre_app.log"))
+            })
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("content").join("server_utility").join("spectre_app.log"));
+    path
+}
+
+#[cfg(windows)]
+fn ensure_log_file_exists(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open(path);
 }
 
 /// Append a timestamped line to the app log. If rotation_days > 0 and the file is older than that many days, the file is truncated first.
@@ -391,10 +401,10 @@ fn main() -> Result<(), eframe::Error> {
     let mut args = std::env::args();
     if let Some(arg) = args.nth(1) {
         if arg == ARG_ELEVATED_APPLY_REGISTRY {
-            println!("[DEBUG] Elevated task: applying registry fix");
+            println!("[Spectre.dbg] Elevated task: applying registry fix");
             match server_prereqs::apply_registry_fix() {
                 Ok(()) => {
-                    println!("[DEBUG] Registry fix applied successfully");
+                    println!("[Spectre.dbg] Registry fix applied successfully");
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -404,10 +414,10 @@ fn main() -> Result<(), eframe::Error> {
             }
         }
         if arg == ARG_ELEVATED_APPLY_HOSTS {
-            println!("[DEBUG] Elevated task: applying GameSpy hosts");
+            println!("[Spectre.dbg] Elevated task: applying GameSpy hosts");
             match server_prereqs::apply_gamepy_hosts() {
                 Ok(()) => {
-                    println!("[DEBUG] GameSpy hosts applied successfully");
+                    println!("[Spectre.dbg] GameSpy hosts applied successfully");
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -421,14 +431,14 @@ fn main() -> Result<(), eframe::Error> {
             let emulate = args.next().as_deref() == Some("--emulate-no-directplay");
             let path = std::path::Path::new(&path);
             if emulate {
-                println!("[DEBUG] DirectPlay check: emulating NOT installed (--emulate-no-directplay)");
+                println!("[Spectre.dbg] DirectPlay check: emulating NOT installed (--emulate-no-directplay)");
                 if let Err(e) = std::fs::write(path, "disabled") {
-                    eprintln!("[DEBUG] Failed to write result file: {}", e);
+                    eprintln!("[Spectre.dbg] Failed to write result file: {}", e);
                     std::process::exit(1);
                 }
                 std::process::exit(0);
             }
-            println!("[DEBUG] DirectPlay check: running elevated detection, result path={}", path.display());
+            println!("[Spectre.dbg] DirectPlay check: running elevated detection, result path={}", path.display());
             match server_prereqs::run_check_directplay_and_write_result(path) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
@@ -438,10 +448,10 @@ fn main() -> Result<(), eframe::Error> {
             }
         }
         if arg == ARG_ELEVATED_INSTALL_DIRECTPLAY {
-            println!("[DEBUG] Elevated task: enabling DirectPlay");
+            println!("[Spectre.dbg] Elevated task: enabling DirectPlay");
             match server_prereqs::enable_directplay() {
                 Ok(()) => {
-                    println!("[DEBUG] DirectPlay enabled successfully");
+                    println!("[Spectre.dbg] DirectPlay enabled successfully");
                     std::process::exit(0);
                 }
                 Err(e) => {
@@ -452,12 +462,15 @@ fn main() -> Result<(), eframe::Error> {
         }
     }
 
-    println!("[DEBUG] Spectre v{} starting...", env!("CARGO_PKG_VERSION"));
+    println!("[Spectre.dbg] Spectre v{} starting...", env!("CARGO_PKG_VERSION"));
+    if std::env::var("SPECTRE_PERF").is_ok() {
+        println!("[Spectre.dbg] SPECTRE_PERF=1: IPC and drain timing enabled");
+    }
 
     let banner_size = get_banner_size().unwrap_or((1024.0, 420.0));
     let splash_size = (banner_size.0 / 2.0, banner_size.1 / 2.0);
     println!(
-        "[DEBUG] Splash window size: {}x{}",
+        "[Spectre.dbg] Splash window size: {}x{}",
         splash_size.0, splash_size.1
     );
 
@@ -467,10 +480,10 @@ fn main() -> Result<(), eframe::Error> {
         .with_decorations(false);
 
     if let Some(icon) = load_icon() {
-        println!("[DEBUG] Application icon loaded successfully");
+        println!("[Spectre.dbg] Application icon loaded successfully");
         viewport_builder = viewport_builder.with_icon(icon);
     } else {
-        println!("[DEBUG] Warning: Failed to load application icon, using default");
+        println!("[Spectre.dbg] Warning: Failed to load application icon, using default");
     }
 
     let options = eframe::NativeOptions {
@@ -478,7 +491,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
 
-    println!("[DEBUG] Initializing eframe application...");
+    println!("[Spectre.dbg] Initializing eframe application...");
     eframe::run_native(
         "Spectre",
         options,
@@ -529,6 +542,8 @@ struct SpectreApp {
     /// (log file path, rotation_days) for app log. Set when Server Launcher webview is created.
     #[cfg(windows)]
     log_state: Option<Arc<Mutex<(std::path::PathBuf, u32)>>>,
+    #[cfg(windows)]
+    background_timer_set: bool,
     splash_screen: Option<SplashScreen>,
     window_centered: bool,
     center_attempts: u32,
@@ -545,12 +560,12 @@ struct SpectreApp {
 
 impl SpectreApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        println!("[DEBUG] Creating SpectreApp instance...");
+        println!("[Spectre.dbg] Creating SpectreApp instance...");
         let splash = SplashScreen::new(&cc.egui_ctx);
-        println!("[DEBUG] Splash screen initialized");
+        println!("[Spectre.dbg] Splash screen initialized");
 
         let config = Config::load();
-        println!("[DEBUG] Configuration loaded");
+        println!("[Spectre.dbg] Configuration loaded");
 
         Self::apply_theme(&cc.egui_ctx);
 
@@ -605,6 +620,7 @@ impl SpectreApp {
             helper_last_slots: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(windows)]
             log_state: None,
+            background_timer_set: false,
             splash_screen: Some(splash),
             window_centered: false,
             center_attempts: 0,
@@ -1267,8 +1283,17 @@ impl SpectreApp {
 
 impl eframe::App for SpectreApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        ctx.request_repaint_after(Duration::from_millis(250));
         #[cfg(windows)]
         {
+            if !self.background_timer_set {
+                if let Some(hwnd) = get_main_window_hwnd(frame) {
+                    use windows::Win32::UI::WindowsAndMessaging::SetTimer;
+                    if unsafe { SetTimer(hwnd, 1, 500, None) } != 0 {
+                        self.background_timer_set = true;
+                    }
+                }
+            }
             if self.pending_hide_to_tray {
                 if let Some(hwnd) = get_main_window_hwnd(frame) {
                     use windows::Win32::Foundation::RECT;
@@ -1377,13 +1402,13 @@ impl eframe::App for SpectreApp {
                 let config_path = server_utility_config_path();
                 let path_exists = config_path.exists();
                 if path_exists {
-                    println!("[IPC] Server utility load: path={}", config_path.display());
+                    println!("[Service] Server utility load: path={}", config_path.display());
                 } else {
-                    println!("[IPC] Server utility: config file not found at {} (using defaults)", config_path.display());
+                    println!("[Service] Server utility: config file not found at {} (using defaults)", config_path.display());
                 }
                 let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                     .unwrap_or_else(|e| {
-                        println!("[IPC] Load failed (using defaults): {}", e);
+                        println!("[Service] Load failed (using defaults): {}", e);
                         spectre_core::server::ServerLauncherData::default()
                     });
                 ensure_server_utility_has_defaults(&mut data);
@@ -1402,11 +1427,11 @@ impl eframe::App for SpectreApp {
                         let total: usize = maps.values().map(|v| v.len()).sum();
                         if total > 0 {
                             for (style, list) in &maps {
-                                println!("[IPC] mpmaplist server {} style {}: {} maps", i, style, list.len());
+                                println!("[Service] mpmaplist server {} style {}: {} maps", i, style, list.len());
                             }
-                            println!("[IPC] mpmaplist server {} total: {} maps from {}", i, total, resolved.display());
+                            println!("[Service] mpmaplist server {} total: {} maps from {}", i, total, resolved.display());
                         } else if !server.mpmaplist_path.is_empty() {
-                            println!("[IPC] mpmaplist server {}: no maps from {}", i, resolved.display());
+                            println!("[Service] mpmaplist server {}: no maps from {}", i, resolved.display());
                         }
                         maps
                     };
@@ -1417,17 +1442,17 @@ impl eframe::App for SpectreApp {
                         match serde_json::to_string(&value) {
                             Ok(json) => {
                                 let source = if path_exists { "from file" } else { "defaults" };
-                                println!("[IPC] Initial state: {} servers, {} bytes ({})", data.servers.len(), json.len(), source);
+                                println!("[Service] Initial state: {} servers, {} bytes ({})", data.servers.len(), json.len(), source);
                                 Some(json)
                             }
                             Err(e) => {
-                                println!("[IPC] Serialize initial state failed: {}", e);
+                                println!("[Service] Serialize initial state failed: {}", e);
                                 None
                             }
                         }
                     }
                     Err(e) => {
-                        println!("[IPC] Serialize initial state failed: {}", e);
+                        println!("[Service] Serialize initial state failed: {}", e);
                         None
                     }
                 }
@@ -1477,15 +1502,17 @@ impl eframe::App for SpectreApp {
                         let shared_helper_last_slots = shared_helper_last_slots.clone();
                         move |request: http::Request<String>| {
                             let body = request.body();
+                            let t0 = Instant::now();
+                            let perf = std::env::var("SPECTRE_PERF").is_ok();
                             if let Ok(ref msg) = serde_json::from_str::<IpcSaveMessage>(body) {
                                 if msg.action != "get_players" && msg.action != "repaint" {
-                                    println!("[IPC] {} body_len={}", msg.action, body.len());
+                                    println!("[Service] {} body_len={}", msg.action, body.len());
                                     let _ = std::io::stdout().flush();
                                 }
                             }
                             match serde_json::from_str::<IpcSaveMessage>(body) {
                                 Ok(msg) if msg.action == "save" => {
-                                    println!("[IPC] Save: {} servers", msg.servers.len());
+                                    println!("[Service] Save: {} servers", msg.servers.len());
                                     let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                                         .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
                                     data.servers = msg.servers;
@@ -1497,7 +1524,7 @@ impl eframe::App for SpectreApp {
                                     }
                                     let result = data.save_to_file(&config_path).map_err(|e| e.to_string());
                                     let status = if result.is_ok() {
-                                        println!("[IPC] Save OK -> {}", config_path.display());
+                                        println!("[Service] Save OK -> {}", config_path.display());
                                         let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                                             .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
                                         ensure_server_utility_has_defaults(&mut data);
@@ -1520,33 +1547,43 @@ impl eframe::App for SpectreApp {
                                             Err(_) => "Saved OK".to_string(),
                                         }
                                     } else {
-                                        println!("[IPC] Save failed: {:?}", result);
+                                        println!("[Service] Save failed: {:?}", result);
                                         result.unwrap_err()
                                     };
+                                    if perf && t0.elapsed().as_millis() >= 1 {
+                                        println!("[Spectre.dbg] IPC save took {} ms", t0.elapsed().as_millis());
+                                    }
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "start" => {
                                     let idx = msg.server_index.unwrap_or(0);
-                                    let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
-                                        Ok(_data) => match msg.servers.get(idx) {
+                                    match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
+                                        Ok(_) => match msg.servers.get(idx).cloned() {
                                             Some(server) => {
-                                                let port = server.port;
-                                                spectre_core::ds_launch::start_ds(server).map(|pid| (port, pid))
+                                                let ipc_tx_b = ipc_tx.clone();
+                                                let pids_b = shared_pids.clone();
+                                                std::thread::spawn(move || {
+                                                    let result = spectre_core::ds_launch::start_ds(&server).map(|pid| (server.port, pid));
+                                                    if let Ok((port, pid)) = &result {
+                                                        if let Ok(mut pids) = pids_b.lock() {
+                                                            pids.insert(*port, *pid);
+                                                        }
+                                                        println!("[Service] Start server {} OK (port {} pid {})", idx, port, pid);
+                                                    } else {
+                                                        println!("[Service] Start server failed: {:?}", result);
+                                                    }
+                                                    let status = result.map_or_else(|e| e, |_| "Started OK".to_string());
+                                                    let _ = ipc_tx_b.send(status);
+                                                });
                                             }
-                                            None => Err(format!("Invalid server index {}", idx)),
+                                            None => {
+                                                let _ = ipc_tx.send(format!("Invalid server index {}", idx));
+                                            }
                                         },
-                                        Err(e) => Err(e),
-                                    };
-                                    if let Ok((port, pid)) = &result {
-                                        if let Ok(mut pids) = shared_pids.lock() {
-                                            pids.insert(*port, *pid);
+                                        Err(e) => {
+                                            let _ = ipc_tx.send(e);
                                         }
-                                        println!("[IPC] Start server {} OK (port {} pid {})", idx, port, pid);
-                                    } else {
-                                        println!("[IPC] Start server failed: {:?}", result);
                                     }
-                                    let status = result.map_or_else(|e| e, |_| "Started OK".to_string());
-                                    let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "browse_mpmaplist" => {
                                     let status = browse_mpmaplist_with_validation();
@@ -1575,36 +1612,39 @@ impl eframe::App for SpectreApp {
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "start_all" => {
-                                    let result = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
-                                        Ok(_data) => {
+                                    let pre = match spectre_core::server::ServerLauncherData::load_from_file(&config_path) {
+                                        Ok(_) => Some(msg.servers.clone()),
+                                        Err(e) => {
+                                            let _ = ipc_tx.send(e);
+                                            None
+                                        }
+                                    };
+                                    if let Some(servers) = pre {
+                                        let ipc_tx_b = ipc_tx.clone();
+                                        let pids_b = shared_pids.clone();
+                                        std::thread::spawn(move || {
                                             let mut errs = Vec::new();
                                             let mut started = Vec::new();
-                                            for server in &msg.servers {
+                                            for server in &servers {
                                                 match spectre_core::ds_launch::start_ds(server) {
                                                     Ok(pid) => started.push((server.port, pid)),
                                                     Err(e) => errs.push(format!("{}: {}", server.name, e)),
                                                 }
                                             }
-                                            if let Ok(mut pids) = shared_pids.lock() {
+                                            if let Ok(mut pids) = pids_b.lock() {
                                                 for (port, pid) in started {
                                                     pids.insert(port, pid);
                                                 }
                                             }
                                             if errs.is_empty() {
-                                                Ok(())
+                                                println!("[Service] Start all servers OK");
                                             } else {
-                                                Err(errs.join("; "))
+                                                println!("[Service] Start all had errors: {:?}", errs);
                                             }
-                                        }
-                                        Err(e) => Err(e),
-                                    };
-                                    if result.is_ok() {
-                                        println!("[IPC] Start all servers OK");
-                                    } else {
-                                        println!("[IPC] Start all had errors: {:?}", result);
+                                            let status = if errs.is_empty() { "All servers started".to_string() } else { errs.join("; ") };
+                                            let _ = ipc_tx_b.send(status);
+                                        });
                                     }
-                                    let status = result.map_or_else(|e| e, |()| "All servers started".to_string());
-                                    let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "stop" => {
                                     let idx = msg.server_index.unwrap_or(0);
@@ -1629,10 +1669,10 @@ impl eframe::App for SpectreApp {
                                                 }
                                                 drop(pids);
                                                 if kill_process_by_pid(pid) {
-                                                    println!("[IPC] Stopped server {} (port {} pid {})", idx, port, pid);
+                                                    println!("[Service] Stopped server {} (port {} pid {})", idx, port, pid);
                                                     "Stopped OK".to_string()
                                                 } else {
-                                                    println!("[IPC] Stop: process {} already gone", pid);
+                                                    println!("[Service] Stop: process {} already gone", pid);
                                                     "Stopped OK".to_string()
                                                 }
                                             } else {
@@ -1641,6 +1681,9 @@ impl eframe::App for SpectreApp {
                                         }
                                         None => "Invalid server index".to_string(),
                                     };
+                                    if perf && t0.elapsed().as_millis() >= 1 {
+                                        println!("[Spectre.dbg] IPC stop took {} ms", t0.elapsed().as_millis());
+                                    }
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "stop_all" => {
@@ -1666,12 +1709,15 @@ impl eframe::App for SpectreApp {
                                     for (_, pid) in &to_stop {
                                         kill_process_by_pid(*pid);
                                     }
-                                    println!("[IPC] Stop all: {} processes", to_stop.len());
+                                    println!("[Service] Stop all: {} processes", to_stop.len());
                                     let _ = ipc_tx.send("All servers stopped".to_string());
                                 }
                                 Ok(msg) if msg.action == "get_running" => {
                                     let ports: Vec<u16> = shared_pids.lock().map(|p| p.keys().copied().collect()).unwrap_or_default();
                                     let status = format!("RUNNING:{}", serde_json::to_string(&ports).unwrap_or_else(|_| "[]".to_string()));
+                                    if perf && t0.elapsed().as_millis() >= 1 {
+                                        println!("[Spectre.dbg] IPC get_running took {} ms", t0.elapsed().as_millis());
+                                    }
                                     let _ = ipc_tx.send(status);
                                 }
                                 Ok(msg) if msg.action == "repaint" => {
@@ -1712,11 +1758,46 @@ impl eframe::App for SpectreApp {
                                             .unwrap_or_else(|| "[]".to_string()),
                                         None => "[]".to_string(),
                                     };
+                                    if perf && t0.elapsed().as_millis() >= 1 {
+                                        println!("[Spectre.dbg] IPC get_players took {} ms", t0.elapsed().as_millis());
+                                    }
                                     let _ = ipc_tx.send(format!("PLAYER_LIST:{}", list_json));
+                                }
+                                Ok(msg) if msg.action == "get_log_content" => {
+                                    let path = app_log_path(&config_path);
+                                    ensure_log_file_exists(&path);
+                                    const MAX_LOG_BYTES: usize = 32 * 1024;
+                                    let content = match std::fs::read(&path) {
+                                        Ok(b) => {
+                                            let start = b.len().saturating_sub(MAX_LOG_BYTES);
+                                            String::from_utf8_lossy(&b[start..])
+                                                .replace('\r', "")
+                                                .replace('\0', "")
+                                        }
+                                        Err(_) => String::new(),
+                                    };
+                                    if perf && t0.elapsed().as_millis() >= 1 {
+                                        println!("[Spectre.dbg] IPC get_log_content took {} ms", t0.elapsed().as_millis());
+                                    }
+                                    let _ = ipc_tx.send(format!("LOG_CONTENT:{}", content));
+                                }
+                                Ok(msg) if msg.action == "open_log_file" => {
+                                    let path = app_log_path(&config_path);
+                                    ensure_log_file_exists(&path);
+                                    let abs_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                                    let mut path_str = abs_path.display().to_string();
+                                    if path_str.starts_with(r"\\?\") {
+                                        path_str = path_str[r"\\?\".len()..].to_string();
+                                    }
+                                    let folder = std::path::Path::new(&path_str).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| path.clone());
+                                    let folder_str = folder.display().to_string();
+                                    println!("[Log] open_log_file: path={} folder={}", path.display(), folder_str);
+                                    let _ = std::process::Command::new("explorer").arg(&folder_str).spawn();
+                                    let _ = ipc_tx.send("OK".to_string());
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
-                                    println!("[IPC] Parse postMessage failed: {}", e);
+                                    println!("[Service] Parse postMessage failed: {}", e);
                                     let _ = ipc_tx.send(format!("Error: {}", e));
                                 }
                             }
@@ -1731,6 +1812,14 @@ impl eframe::App for SpectreApp {
                     self.webview = Some(wv);
                     self.webview_fade_alpha = 1.0;
                     self.ipc_save_rx = Some(ipc_rx);
+                    if card_name == "server_utility" {
+                        let log_path = app_log_path(&config_path);
+                        ensure_log_file_exists(&log_path);
+                        let rotation_days = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                            .map(|d| d.server_manager.log_rotation_days)
+                            .unwrap_or(0);
+                        self.log_state = Some(Arc::new(Mutex::new((log_path, rotation_days))));
+                    }
                 } else {
                     self.card_launch_error = Some("Failed to create WebView.".to_string());
                 }
@@ -1751,40 +1840,82 @@ impl eframe::App for SpectreApp {
                 x: 0,
                 y: (ACTION_BAR_HEIGHT * scale) as i32,
                 width: (screen.width() * scale) as u32,
-                height: if self.webview_repaint_frames == 2 && h > 1 {
-                    h - 1
-                } else {
-                    h
-                },
+                height: h,
             };
             let _ = wv.set_bounds(bounds);
         }
 
         #[cfg(windows)]
         if let Some(ref rx) = self.ipc_save_rx {
-            if let Ok(status_msg) = rx.try_recv() {
+            fn is_critical(msg: &str) -> bool {
+                msg == "REPAINT"
+                    || msg == "Stopped OK"
+                    || msg == "All servers stopped"
+                    || msg == "Started OK"
+                    || msg == "All servers started"
+                    || msg == "Saved OK"
+                    || msg.starts_with("STATE:")
+            }
+            let perf = std::env::var("SPECTRE_PERF").is_ok();
+            let t_drain = Instant::now();
+            let mut critical = Vec::new();
+            let mut other = Vec::new();
+            while let Ok(m) = rx.try_recv() {
+                if is_critical(&m) {
+                    critical.push(m);
+                } else {
+                    other.push(m);
+                }
+            }
+            let n_msg = critical.len() + other.len();
+            if perf && n_msg > 0 {
+                println!("[Spectre.dbg] IPC drain: {} ms to collect {} messages ({} critical, {} other)", t_drain.elapsed().as_millis(), n_msg, critical.len(), other.len());
+            }
+            let coalesced: Vec<String> = {
+                let mut by_type: HashMap<String, String> = HashMap::new();
+                for msg in other {
+                    let key = msg.find(':').map(|i| msg[..i].to_string()).unwrap_or_else(|| msg.clone());
+                    by_type.insert(key, msg);
+                }
+                by_type.into_values().collect()
+            };
+            let n_eval = critical.len() + coalesced.len();
+            for status_msg in &critical {
                 if status_msg == "REPAINT" {
-                    // JS requested repaint after updating DOM (e.g. unsaved indicator); no script to run.
                     self.webview_repaint_frames = 10;
                     ctx.request_repaint();
                 } else {
                     let script = format!(
                         "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
-                        serde_json::to_string(&status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
+                        serde_json::to_string(status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
                     );
                     if let Some(ref wv) = self.webview {
                         if let Err(e) = wv.evaluate_script(&script) {
-                            println!("[IPC] evaluate_script status failed: {}", e);
+                            println!("[Service] evaluate_script status failed: {}", e);
                         }
                     }
-                    self.webview_repaint_frames = if status_msg == "Saved OK" || status_msg.starts_with("STATE:")
-                        || status_msg == "Stopped OK" || status_msg == "All servers stopped"
-                    {
-                        15
-                    } else {
-                        3
-                    };
+                    self.webview_repaint_frames = 15;
                     ctx.request_repaint();
+                }
+            }
+            for status_msg in &coalesced {
+                let script = format!(
+                    "window.__spectreIpcStatus && window.__spectreIpcStatus({});",
+                    serde_json::to_string(status_msg).unwrap_or_else(|_| "window.__spectreIpcStatus('OK')".to_string())
+                );
+                if let Some(ref wv) = self.webview {
+                    if let Err(e) = wv.evaluate_script(&script) {
+                        println!("[Service] evaluate_script status failed: {}", e);
+                    }
+                }
+                self.webview_repaint_frames = 3;
+                ctx.request_repaint();
+            }
+            if perf && n_msg > 0 {
+                if n_eval < n_msg {
+                    println!("[Spectre.dbg] IPC drain: total {} ms ({} messages -> {} eval scripts)", t_drain.elapsed().as_millis(), n_msg, n_eval);
+                } else {
+                    println!("[Spectre.dbg] IPC drain: total {} ms (eval scripts)", t_drain.elapsed().as_millis());
                 }
             }
         }
@@ -1926,7 +2057,7 @@ impl eframe::App for SpectreApp {
                             Some(c) => c,
                             None => match server.configs.first() {
                                 Some(c) => {
-                                    println!("[DS-Helper] port {}: no profile \"{}\", using \"{}\"", port, server.current_config, c.name);
+                                    println!("[Daemon] port {}: no profile \"{}\", using \"{}\"", port, server.current_config, c.name);
                                     let _ = std::io::stdout().flush();
                                     c
                                 }
@@ -1945,11 +2076,13 @@ impl eframe::App for SpectreApp {
                             .lock()
                             .ok()
                             .and_then(|m| m.get(&port).cloned());
-                        let log_cb = self.log_state.as_ref().map(|state| {
-                            let state = state.clone();
-                            Box::new(move |msg: &str| write_app_log(&state, msg)) as Box<dyn Fn(&str)>
-                        });
-                        let log_ref = log_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(&str));
+                        let log_state = self.log_state.clone();
+                        let log_callback = move |line: &str| {
+                            if let Some(ref state) = log_state {
+                                write_app_log(state, line);
+                            }
+                        };
+                        let log_ref: Option<&dyn Fn(&str)> = Some(&log_callback);
                         match ds_helper::enforce_player_lists(
                             pid,
                             port,
@@ -1958,6 +2091,7 @@ impl eframe::App for SpectreApp {
                             &mut kicked,
                             previous_slots.as_deref(),
                             log_ref,
+                            server.use_sabre_squadron,
                         ) {
                             Ok(current_slots) => {
                                 if let Ok(mut last) = self.helper_last_slots.lock() {
@@ -1965,7 +2099,7 @@ impl eframe::App for SpectreApp {
                                 }
                             }
                             Err(e) => {
-                                let line = format!("[Helper] port {}: {}", port, e);
+                                let line = format!("[DS-Helper] port {}: {}", port, e);
                                 println!("{}", line);
                                 if let Some(ref state) = self.log_state {
                                     write_app_log(state, &line);
@@ -2003,7 +2137,7 @@ impl eframe::App for SpectreApp {
                 let center_y = (monitor_size.y - splash_size.1) / 2.0;
 
                 if self.center_attempts == 1 {
-                    println!("[DEBUG] Centering splash window (attempt {}): monitor={}x{}, window={}x{}, pos=({}, {})",
+                    println!("[Spectre.dbg] Centering splash window (attempt {}): monitor={}x{}, window={}x{}, pos=({}, {})",
                         self.center_attempts, monitor_size.x, monitor_size.y, splash_size.0, splash_size.1, center_x, center_y);
                 }
 
@@ -2014,25 +2148,25 @@ impl eframe::App for SpectreApp {
 
                 if self.center_attempts >= 3 {
                     self.window_centered = true;
-                    println!("[DEBUG] Splash window centering complete");
+                    println!("[Spectre.dbg] Splash window centering complete");
                 }
             }
         }
 
         if let Some(ref mut splash) = self.splash_screen {
             if !splash.show(ctx) {
-                println!("[DEBUG] Splash screen finished, transitioning to main application");
+                println!("[Spectre.dbg] Splash screen finished, transitioning to main application");
                 self.splash_screen = None;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 let is_fullscreen = self.config.fullscreen_dialogs;
                 if is_fullscreen {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-                    println!("[DEBUG] Application set to windowed fullscreen (maximized)");
+                    println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
                 } else {
                     const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(APP_WINDOW_SIZE.0, APP_WINDOW_SIZE.1)));
-                    println!("[DEBUG] Application window resized to {}x{} with decorations enabled", APP_WINDOW_SIZE.0, APP_WINDOW_SIZE.1);
+                    println!("[Spectre.dbg] Application window resized to {}x{} with decorations enabled", APP_WINDOW_SIZE.0, APP_WINDOW_SIZE.1);
                     
                     let monitor_size = ctx.input(|i| i.viewport().monitor_size);
                     if let Some(monitor_size) = monitor_size {
@@ -2041,7 +2175,7 @@ impl eframe::App for SpectreApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
                             center_x, center_y,
                         )));
-                        println!("[DEBUG] Main window re-centered at: ({}, {})", center_x, center_y);
+                        println!("[Spectre.dbg] Main window re-centered at: ({}, {})", center_x, center_y);
                     } else {
                         let screen_size = ctx.screen_rect().size();
                         let center_x = (screen_size.x - APP_WINDOW_SIZE.0) / 2.0;
@@ -2050,7 +2184,7 @@ impl eframe::App for SpectreApp {
                             center_x, center_y,
                         )));
                         println!(
-                            "[DEBUG] Main window re-centered (fallback) at: ({}, {})",
+                            "[Spectre.dbg] Main window re-centered (fallback) at: ({}, {})",
                             center_x, center_y
                         );
                     }
@@ -2102,7 +2236,7 @@ impl eframe::App for SpectreApp {
                     if ui.checkbox(&mut self.config.fullscreen_dialogs, "Fullscreen Application").changed() {
                         if self.config.fullscreen_dialogs {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-                            println!("[DEBUG] Application set to windowed fullscreen (maximized)");
+                            println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
                         } else {
                             const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
@@ -2118,7 +2252,7 @@ impl eframe::App for SpectreApp {
                                 let center_y = (screen_size.y - APP_WINDOW_SIZE.1) / 2.0;
                                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x, center_y)));
                             }
-                            println!("[DEBUG] Application restored to windowed mode (1280x1000, centered)");
+                            println!("[Spectre.dbg] Application restored to windowed mode (1280x1000, centered)");
                         }
                         self.config.save();
                     }
@@ -2128,7 +2262,7 @@ impl eframe::App for SpectreApp {
 
                     if ui.button("Close").clicked() {
                         self.config.save();
-                        println!("[DEBUG] Options dialog closed");
+                        println!("[Spectre.dbg] Options dialog closed");
                         self.show_options = false;
                     }
                 });
@@ -2171,7 +2305,7 @@ impl eframe::App for SpectreApp {
 
                             ui.add_space(20.0);
                             if ui.button("Close").clicked() {
-                                println!("[DEBUG] About dialog closed");
+                                println!("[Spectre.dbg] About dialog closed");
                                 self.show_about = false;
                             }
                         });

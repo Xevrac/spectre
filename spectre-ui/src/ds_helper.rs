@@ -1,17 +1,18 @@
-//! HD2 DS helper: read process memory for player list, enforce ban/whitelist by sending kick commands.
-//! Player buffer at $009D6A4C, 32 slots × 196 bytes
+//! HD2 DS helper: read player list from process memory, enforce ban/whitelist via console commands.
 
 #![cfg(windows)]
 
 use spectre_core::server::{ServerConfig, ServerManager};
 use std::collections::HashSet;
 use std::io::Write;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, LPARAM, WPARAM};
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
-use windows::Win32::Foundation::LPARAM;
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, PostMessageW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, PostMessageW, SetForegroundWindow,
+    WM_CHAR, WM_KEYDOWN,
+};
 
 const PLAYER_BUFFER_POINTER_ADDR: u32 = 0x009D6A4C + 4;
 const SLOT_COUNT: usize = 32;
@@ -20,7 +21,7 @@ const SLOT_IP_OFFSET: usize = 4;
 const SLOT_NAME_OFFSET: usize = 8;
 const NAME_MAX: usize = SLOT_STRIDE - SLOT_NAME_OFFSET;
 
-/// Find the main window of a process by PID (for sending console commands).
+/// Main/console window for a process by PID; prefers title containing "Console".
 pub fn find_main_window_by_pid(pid: u32) -> Option<windows::Win32::Foundation::HWND> {
     if pid == 0 {
         return None;
@@ -34,14 +35,48 @@ pub fn find_main_window_by_pid(pid: u32) -> Option<windows::Win32::Foundation::H
 
 #[allow(non_upper_case_globals)]
 static mut g_enum_pid: u32 = 0;
+const MAX_WINDOWS: usize = 16;
 #[allow(non_upper_case_globals)]
-static mut g_enum_result: Option<windows::Win32::Foundation::HWND> = None;
+static mut g_enum_hwnds: [Option<windows::Win32::Foundation::HWND>; MAX_WINDOWS] = [None; MAX_WINDOWS];
+#[allow(non_upper_case_globals)]
+static mut g_enum_count: usize = 0;
 
 unsafe fn enum_windows_with_pid(pid: u32, result: &mut Option<windows::Win32::Foundation::HWND>) {
     g_enum_pid = pid;
-    g_enum_result = None;
+    g_enum_count = 0;
     let _ = EnumWindows(Some(enum_callback), LPARAM(0));
-    *result = g_enum_result;
+    let count = g_enum_count;
+    let hwnds: Vec<_> = g_enum_hwnds[..count].iter().filter_map(|o| *o).collect();
+    *result = pick_best_window(&hwnds);
+}
+
+fn get_window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
+    let mut buf = [0u16; 260];
+    let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    if len <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..(len as usize).min(buf.len())])
+}
+
+fn pick_best_window(hwnds: &[windows::Win32::Foundation::HWND]) -> Option<windows::Win32::Foundation::HWND> {
+    let mut fallback = None;
+    for &hwnd in hwnds {
+        if hwnd.0.is_null() {
+            continue;
+        }
+        if fallback.is_none() {
+            fallback = Some(hwnd);
+        }
+        let s = get_window_title(hwnd).to_uppercase();
+        if s.contains("CONSOLE") {
+            return Some(hwnd);
+        }
+        if s.contains("SERVER") {
+            fallback = Some(hwnd);
+        }
+    }
+    fallback
 }
 
 unsafe extern "system" fn enum_callback(
@@ -50,18 +85,20 @@ unsafe extern "system" fn enum_callback(
 ) -> windows::Win32::Foundation::BOOL {
     let mut window_pid: u32 = 0;
     GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
-    if window_pid == g_enum_pid {
-        g_enum_result = Some(hwnd);
-        windows::Win32::Foundation::BOOL(0)
-    } else {
-        windows::Win32::Foundation::BOOL(1)
+    if window_pid != g_enum_pid {
+        return windows::Win32::Foundation::BOOL(1);
     }
+    if g_enum_count < MAX_WINDOWS {
+        g_enum_hwnds[g_enum_count] = Some(hwnd);
+        g_enum_count += 1;
+    }
+    windows::Win32::Foundation::BOOL(1)
 }
 
-/// Send a console command to the DS window (simulate typing + Enter).
+/// Types a command into the DS console window (PostMessage WM_CHAR + Enter).
 pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str) {
-    use windows::Win32::UI::WindowsAndMessaging::{WM_CHAR, WM_KEYDOWN};
-
+    let _ = unsafe { SetForegroundWindow(hwnd) };
+    std::thread::sleep(std::time::Duration::from_millis(120));
     for ch in command.chars() {
         let code = ch as u32;
         if code <= 0xFFFF {
@@ -77,10 +114,9 @@ pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str)
             LPARAM(0),
         )
     };
-    std::thread::sleep(std::time::Duration::from_millis(25));
+    std::thread::sleep(std::time::Duration::from_millis(60));
 }
 
-/// Returns (active_players, max_clients) for display. Uses same memory read as read_player_slots.
 pub fn get_player_count(pid: u32, max_clients: u32) -> Option<(u32, u32)> {
     if pid == 0 {
         return None;
@@ -93,7 +129,6 @@ pub fn get_player_count(pid: u32, max_clients: u32) -> Option<(u32, u32)> {
     Some((active, max_clients))
 }
 
-/// Returns list of connected players (name, ip) for the given process. Empty name slots are omitted.
 pub fn get_player_list(pid: u32) -> Option<Vec<(String, String)>> {
     if pid == 0 {
         return None;
@@ -109,7 +144,6 @@ pub fn get_player_list(pid: u32) -> Option<Vec<(String, String)>> {
     Some(list)
 }
 
-/// Slot data: (name, ip). Empty name means slot not used.
 pub fn read_player_slots(process_handle: HANDLE) -> Option<Vec<(String, String)>> {
     let mut ptr_buf: [u8; 4] = [0; 4];
     let read_ok = unsafe {
@@ -158,7 +192,6 @@ pub fn read_player_slots(process_handle: HANDLE) -> Option<Vec<(String, String)>
     Some(slots)
 }
 
-/// Extract IP part from ban/whitelist entry (format "IP" or "IP:>comment").
 fn entry_ip(entry: &str) -> &str {
     if let Some(pos) = entry.find(":>") {
         entry[..pos].trim()
@@ -167,24 +200,26 @@ fn entry_ip(entry: &str) -> &str {
     }
 }
 
-/// Extract comment part from entry (format "IP:>comment"), if any.
 fn entry_comment(entry: &str) -> Option<&str> {
     entry.find(":>").map(|pos| entry[pos + 2..].trim()).filter(|s| !s.is_empty())
 }
 
-/// Build asay message: player name + reason. For whitelist: "<name> not in whitelist."; for ban: "<name> <comment>" or "<name> Banned".
+pub const ASA_MAX_LEN: usize = 43;
+pub const BAN_REASON_MAX_LEN: usize = 21;
+
 fn asay_message_for_kick(player_name: &str, kick_reason: &str, matching_entry: Option<&str>) -> String {
-    if kick_reason == "not in whitelist" {
-        return format!("{} not in whitelist.", player_name.trim());
-    }
-    let reason = matching_entry.and_then(entry_comment).unwrap_or("(none)");
-    format!("{} is banned. Reason: {}", player_name.trim(), reason)
+    let name = player_name.trim();
+    let msg = if kick_reason == "not in whitelist" {
+        format!("{} not in whitelist.", name)
+    } else {
+        let reason = matching_entry.and_then(entry_comment).unwrap_or("(none)");
+        let reason_trim = reason.chars().take(BAN_REASON_MAX_LEN).collect::<String>();
+        format!("{} is banned. Reason: {}", name, reason_trim)
+    };
+    msg.chars().take(ASA_MAX_LEN).collect()
 }
 
-/// Enforce forced ban list, per-config ban list, and whitelist. Kicks matching players.
-/// `kicked` is updated: add names when we kick, remove names that are no longer in slots (disconnected).
-/// Returns current connected slots (name, ip) for join detection on next call.
-/// If `log_line` is `Some`, it is called with each log message (in addition to stdout).
+/// Enforces ban/whitelist: kicks matching players, sends asay then kickplayer via console.
 pub fn enforce_player_lists(
     pid: u32,
     port: u16,
@@ -193,6 +228,7 @@ pub fn enforce_player_lists(
     kicked: &mut HashSet<String>,
     previous_slots: Option<&[(String, String)]>,
     log_line: Option<&dyn Fn(&str)>,
+    _use_sabre_squadron: bool,
 ) -> Result<Vec<(String, String)>, String> {
     let access = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION;
     let handle = unsafe { OpenProcess(access, false, pid) }
@@ -212,7 +248,6 @@ pub fn enforce_player_lists(
         .cloned()
         .collect();
 
-    let _current_set: HashSet<(String, String)> = current_connected.iter().cloned().collect();
     let previous_set: HashSet<(String, String)> = previous_slots
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
@@ -239,7 +274,14 @@ pub fn enforce_player_lists(
         return Ok(current_connected);
     }
 
-    let hwnd = find_main_window_by_pid(pid).ok_or("Could not find DS window")?;
+    let hwnd = find_main_window_by_pid(pid);
+    if hwnd.is_none() {
+        let msg = format!("[DS-Helper] port {}: Could not find DS window (kick command will not be sent)", port);
+        println!("{}", msg);
+        if let Some(log) = log_line {
+            log(&msg);
+        }
+    }
 
     if should_do_ban && !current_connected.is_empty() {
         let msg = format!(
@@ -308,12 +350,13 @@ pub fn enforce_player_lists(
                 log(&msg);
             }
             let asay_msg = asay_message_for_kick(&name, &kick_reason, matching_entry);
-            let asay_safe = asay_msg.replace('"', "\\\"");
-            let _ = send_command_to_ds(hwnd, &format!("asay \"{}\"", asay_safe));
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let cmd = format!("kickplayer {}", slot_index);
-            send_command_to_ds(hwnd, &cmd);
-            kicked.insert(name);
+            if let Some(h) = hwnd {
+                send_command_to_ds(h, &format!("asay {}", asay_msg));
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                let cmd = format!("kickplayer {}", name.trim());
+                send_command_to_ds(h, &cmd);
+                kicked.insert(name);
+            }
         }
     }
 

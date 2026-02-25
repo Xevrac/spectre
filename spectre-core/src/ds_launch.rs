@@ -188,7 +188,7 @@ pub fn start_ds(server: &Server) -> Result<u32, String> {
         format!("spectre_ds_{}.txt", name_part)
     };
     let written = write_script_to_ds_dir(&script, path, &commands_basename)?;
-    println!("[DS] Wrote {} ({} lines)", written.display(), script.len());
+    println!("[Server] Wrote {} ({} lines)", written.display(), script.len());
 
     let parent = path
         .parent()

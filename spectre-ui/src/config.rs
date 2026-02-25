@@ -59,12 +59,12 @@ impl Config {
         if Path::new(CONFIG_FILE).exists() {
             if let Ok(contents) = fs::read_to_string(CONFIG_FILE) {
                 if let Ok(config) = serde_json::from_str::<Config>(&contents) {
-                    println!("[DEBUG] Config loaded from {}", CONFIG_FILE);
+                    println!("[Spectre.dbg] Config loaded from {}", CONFIG_FILE);
                     let current_id = get_machine_id();
                     let stored_id = config.machine_id.as_deref();
                     if stored_id != Some(current_id.as_str()) {
                         println!(
-                            "[DEBUG] Config: machine mismatch (stored={:?}, current={}), resetting config to defaults",
+                            "[Spectre.dbg] Config: machine mismatch (stored={:?}, current={}), resetting config to defaults",
                             stored_id, current_id
                         );
                         let mut config = Config::default();
@@ -74,13 +74,13 @@ impl Config {
                     }
                     return config;
                 } else {
-                    println!("[DEBUG] Failed to parse config file, creating default");
+                    println!("[Spectre.dbg] Failed to parse config file, creating default");
                 }
             } else {
-                println!("[DEBUG] Failed to read config file, creating default");
+                println!("[Spectre.dbg] Failed to read config file, creating default");
             }
         } else {
-            println!("[DEBUG] Config file not found, creating default");
+            println!("[Spectre.dbg] Config file not found, creating default");
         }
 
         let default_config = Config::default();
@@ -91,12 +91,12 @@ impl Config {
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             if fs::create_dir_all(CONFIG_DIR).is_ok() && fs::write(CONFIG_FILE, json).is_ok() {
-                println!("[DEBUG] Config saved to {}", CONFIG_FILE);
+                println!("[Spectre.dbg] Config saved to {}", CONFIG_FILE);
             } else {
-                println!("[DEBUG] Failed to save config to {}", CONFIG_FILE);
+                println!("[Spectre.dbg] Failed to save config to {}", CONFIG_FILE);
             }
         } else {
-            println!("[DEBUG] Failed to serialize config");
+            println!("[Spectre.dbg] Failed to serialize config");
         }
     }
 }

@@ -67,10 +67,11 @@
     <main class="content">
       <div class="tabs" role="tablist">
         <button type="button" class="tab" data-tab="console" role="tab" aria-selected="true">Console</button>
-        <button type="button" class="tab" data-tab="maps" role="tab">General</button>
-        <button type="button" class="tab" data-tab="coop" role="tab">Coop</button>
         <button type="button" class="tab" data-tab="players" role="tab">Players</button>
         <button type="button" class="tab" data-tab="logs" role="tab">Logs</button>
+        <span class="tab-sep" aria-hidden="true"></span>
+        <button type="button" class="tab" data-tab="maps" role="tab">General</button>
+        <button type="button" class="tab" data-tab="coop" role="tab">Coop</button>
         <button type="button" class="tab" data-tab="general" role="tab">Settings</button>
       </div>
 
@@ -169,7 +170,7 @@
             <div class="form-grid">
               <div class="form-row">
                 <label>Max clients</label>
-                <input type="number" class="input input-num" id="max-clients" min="1" max="64" value="32">
+                <input type="number" class="input input-num" id="max-clients" min="1" max="32" value="32">
               </div>
               <div class="form-row">
                 <label>Point limit</label>
@@ -334,6 +335,7 @@
                   <tr>
                     <th scope="col">Name</th>
                     <th scope="col">IP</th>
+                    <th scope="col" class="col-ban">Ban</th>
                   </tr>
                 </thead>
                 <tbody id="current-players-tbody">
@@ -344,12 +346,15 @@
           <div class="panel-card">
             <h2 class="panel-heading">Banlist</h2>
             <p class="map-hint">Players whose IP matches an entry here are kicked. Optionally add a comment (e.g. reason); it is shown in the console when they are kicked.</p>
-            <p class="form-notice form-notice-info">The comment is sent to the server via <code>asay</code> command.</p>
+            <p class="form-notice form-notice-info">The comment is sent in-game via <code>asay</code> (max 21 chars so it fits with player name).</p>
             <div class="form-row form-row-with-button">
               <label for="ban-list-add-ip">Add entry</label>
               <div class="input-with-button input-row-two">
                 <input type="text" class="input" id="ban-list-add-ip" placeholder="IP e.g. 192.168.1.1" aria-label="Ban list IP">
-                <input type="text" class="input" id="ban-list-add-comment" placeholder="Comment (optional)" aria-label="Ban list comment">
+                <span class="input-with-counter">
+                  <input type="text" class="input" id="ban-list-add-comment" placeholder="Reason (optional)" aria-label="Ban reason" maxlength="21">
+                  <span class="char-counter" id="ban-list-add-comment-counter" aria-live="polite">0/21</span>
+                </span>
                 <button type="button" class="btn btn-sm" id="ban-list-add">Add</button>
               </div>
             </div>
@@ -383,8 +388,8 @@
 
         <section class="tab-panel hidden" id="panel-logs" role="tabpanel">
           <div class="panel-card">
-            <h2 class="panel-heading">App log</h2>
-            <p class="map-hint">DS-Helper and DS events from Spectre. You can open the log file in your file explorer or refresh below.</p>
+            <h2 class="panel-heading">Logs</h2>
+            <p class="map-hint">Daemon and Spectre events. Open in file explorer or refresh below.</p>
             <div class="form-row form-row-full">
               <div class="log-actions">
                 <button type="button" class="btn btn-sm" id="logs-refresh" title="Reload log content">Refresh</button>

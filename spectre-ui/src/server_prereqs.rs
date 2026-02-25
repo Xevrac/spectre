@@ -100,16 +100,16 @@ mod windows {
     /// Run DirectPlay check and write result to a file (used by elevated process).
     /// Writes "enabled" or "disabled" to the given path.
     pub fn run_check_directplay_and_write_result(path: &std::path::Path) -> Result<(), String> {
-        println!("[DEBUG] DirectPlay: running detection (DISM/PowerShell)");
+        println!("[Spectre.dbg] DirectPlay: running detection (DISM/PowerShell)");
         let enabled = directplay_enabled();
         let s = if enabled { "enabled" } else { "disabled" };
-        println!("[DEBUG] DirectPlay: detection result={}, writing to {}", s, path.display());
+        println!("[Spectre.dbg] DirectPlay: detection result={}, writing to {}", s, path.display());
         fs::write(path, s).map_err(|e| e.to_string())
     }
 
     /// Enable DirectPlay Windows Optional Feature. Requires administrator rights.
     pub fn enable_directplay() -> Result<(), String> {
-        println!("[DEBUG] DirectPlay: enabling via DISM");
+        println!("[Spectre.dbg] DirectPlay: enabling via DISM");
         let out = Command::new("dism")
             .args([
                 "/online",
@@ -120,10 +120,10 @@ mod windows {
             .map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&out.stderr);
         if out.status.success() {
-            println!("[DEBUG] DirectPlay: DISM enable succeeded");
+            println!("[Spectre.dbg] DirectPlay: DISM enable succeeded");
             return Ok(());
         }
-        println!("[DEBUG] DirectPlay: DISM enable failed: {}", text.trim());
+        println!("[Spectre.dbg] DirectPlay: DISM enable failed: {}", text.trim());
         Err(format!("DISM failed: {}", text.trim()))
     }
 
@@ -140,9 +140,9 @@ mod windows {
         let emulate = cfg!(debug_assertions)
             && std::env::var("SPECTRE_EMULATE_NO_DIRECTPLAY").is_ok();
         if emulate {
-            println!("[DEBUG] DirectPlay: SPECTRE_EMULATE_NO_DIRECTPLAY set, elevated check will report NOT installed");
+            println!("[Spectre.dbg] DirectPlay: SPECTRE_EMULATE_NO_DIRECTPLAY set, elevated check will report NOT installed");
         }
-        println!("[DEBUG] DirectPlay: spawning elevated check, result_path={}", result_path.display());
+        println!("[Spectre.dbg] DirectPlay: spawning elevated check, result_path={}", result_path.display());
         std::thread::spawn(move || {
             let status = if emulate {
                 runas::Command::new(&exe)
@@ -163,15 +163,15 @@ mod windows {
                     let content = fs::read_to_string(&result_path).unwrap_or_default();
                     let enabled = content.trim().to_lowercase() == "enabled";
                     let _ = fs::remove_file(&result_path);
-                    println!("[DEBUG] DirectPlay: elevated check finished, result={}", if enabled { "enabled" } else { "disabled" });
+                    println!("[Spectre.dbg] DirectPlay: elevated check finished, result={}", if enabled { "enabled" } else { "disabled" });
                     Ok(enabled)
                 }
                 Ok(_) => {
-                    println!("[DEBUG] DirectPlay: elevated check process exited with error");
+                    println!("[Spectre.dbg] DirectPlay: elevated check process exited with error");
                     Err("Elevated check process exited with an error.".to_string())
                 }
                 Err(e) => {
-                    println!("[DEBUG] DirectPlay: elevated check failed to run: {}", e);
+                    println!("[Spectre.dbg] DirectPlay: elevated check failed to run: {}", e);
                     Err(e.to_string())
                 }
             };
@@ -216,7 +216,7 @@ mod windows {
 
     /// Apply the registry fix. Requires administrator rights.
     pub fn apply_registry_fix() -> Result<(), String> {
-        println!("[DEBUG] Registry fix: applying IPAddressFamilySettings to {}", REG_PATH);
+        println!("[Spectre.dbg] Registry fix: applying IPAddressFamilySettings to {}", REG_PATH);
         use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_WRITE};
         use winreg::RegKey;
 
@@ -232,7 +232,7 @@ mod windows {
             .map_err(|e| format!("Set HD2_SabreSquadron: {}", e))?;
         key.set_value(REG_VALUE_HD2, &REG_REQUIRED)
             .map_err(|e| format!("Set hd2: {}", e))?;
-        println!("[DEBUG] Registry fix: applied successfully");
+        println!("[Spectre.dbg] Registry fix: applied successfully");
         Ok(())
     }
 
@@ -303,7 +303,7 @@ mod windows {
     /// Requires administrator rights.
     pub fn apply_gamepy_hosts() -> Result<(), String> {
         let path = hosts_file_path();
-        println!("[DEBUG] GameSpy hosts: applying to {}", path.display());
+        println!("[Spectre.dbg] GameSpy hosts: applying to {}", path.display());
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read hosts file: {} (try running as Administrator)", e))?;
 
@@ -326,7 +326,7 @@ mod windows {
 
         fs::write(&path, new_content)
             .map_err(|e| format!("Cannot write hosts file: {} (try running as Administrator)", e))?;
-        println!("[DEBUG] GameSpy hosts: applied successfully");
+        println!("[Spectre.dbg] GameSpy hosts: applied successfully");
         Ok(())
     }
 

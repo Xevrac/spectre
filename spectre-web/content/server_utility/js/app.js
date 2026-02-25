@@ -58,14 +58,11 @@
     currentPlayerList: [],
     playerListRevealed: {},
     server_manager: {
-      server_ip: '10.0.0.1',
-      server_port: 2332,
-      hd2ds_path: '',
-      hd2ds_sabresquadron_path: '',
       enable_watchdog: true,
-      watchdog_interval: 15,
       restart_interval_days: 0,
-      log_rotation_days: 0
+      log_rotation_days: 0,
+      enable_forced_ban_list: true,
+      forced_ban_list: []
     }
   };
 
@@ -183,7 +180,7 @@
     const domain = (c.domain === 'local' || c.domain === 'Internet') ? c.domain : 'local';
     const domainEl = document.getElementById('domain-' + domain.toLowerCase());
     if (domainEl) domainEl.checked = true;
-    set('max-clients', c.max_clients);
+    set('max-clients', Math.min(Math.max(c.max_clients || 32, 1), 32));
     set('point-limit', c.point_limit);
     set('round-limit', c.round_limit);
     set('round-count', c.round_count != null ? c.round_count : 1);
@@ -235,7 +232,7 @@
     c.style = get('style-select');
     const domainRadio = document.querySelector('input[name="domain-type"]:checked');
     c.domain = domainRadio ? domainRadio.value : 'local';
-    c.max_clients = parseInt(get('max-clients'), 10) || 32;
+    c.max_clients = Math.min(Math.max(parseInt(get('max-clients'), 10) || 32, 1), 32);
     c.point_limit = parseInt(get('point-limit'), 10) || 0;
     c.round_limit = parseInt(get('round-limit'), 10) || 5;
     c.round_count = parseInt(get('round-count'), 10);
@@ -428,12 +425,6 @@
     ul.innerHTML = available.map(function (name, i) {
       return '<li class="' + (i === selectedAvailableMapIndex ? 'selected' : '') + '" data-index="' + i + '">' + escapeHtml(name) + '</li>';
     }).join('');
-    ul.querySelectorAll('li[data-index]').forEach(function (li) {
-      li.addEventListener('click', function () {
-        selectedAvailableMapIndex = parseInt(this.dataset.index, 10);
-        renderAvailableMapList();
-      });
-    });
   }
 
   function renderMapList() {
@@ -450,12 +441,6 @@
     ul.innerHTML = maps.map((m, i) =>
       `<li class="${i === selectedMapIndex ? 'selected' : ''}" data-index="${i}">${escapeHtml(m)}</li>`
     ).join('');
-    ul.querySelectorAll('li[data-index]').forEach(li => {
-      li.addEventListener('click', function () {
-        selectedMapIndex = parseInt(this.dataset.index, 10);
-        renderMapList();
-      });
-    });
   }
 
   function renderBanList() {
@@ -496,22 +481,41 @@
     const list = state.currentPlayerList || [];
     const revealed = state.playerListRevealed || {};
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="2" class="empty-hint">No players. Server may be stopped or no one connected.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-hint">No players. Server may be stopped or no one connected.</td></tr>';
       return;
     }
     tbody.innerHTML = list.map(function (p, i) {
       var name = (p && p.name != null) ? String(p.name) : '';
       var ip = (p && p.ip != null) ? String(p.ip) : '';
       var isRevealed = revealed[i];
-      var ipContent = isRevealed ? escapeHtml(ip) : 'Click to reveal';
+      var ipDisplay = isRevealed ? escapeHtml(ip) : 'Click to reveal';
       var ipClass = 'player-ip-cell' + (isRevealed ? ' revealed' : '');
       var dataAttrs = isRevealed ? '' : ' data-index="' + i + '" data-ip="' + escapeHtml(ip) + '"';
-      return '<tr><td>' + escapeHtml(name) + '</td><td class="' + ipClass + '"' + dataAttrs + '>' + ipContent + '</td></tr>';
+      var ipInner = '<span class="spoiler-tag">' + ipDisplay + '</span>';
+      var banBtn = '<button type="button" class="btn btn-sm btn-ban-row" data-ip="' + escapeHtml(ip) + '" title="Add IP to ban list">Ban</button>';
+      return '<tr><td>' + escapeHtml(name) + '</td><td class="' + ipClass + '"' + dataAttrs + '>' + ipInner + '</td><td class="player-ban-cell">' + banBtn + '</td></tr>';
     }).join('');
   }
 
   function countRunning() {
     return state.servers.filter(function (s) { return s.running; }).length;
+  }
+
+  // Coalesce frequent render calls (especially from IPC/status updates) into animation frames
+  let renderRequested = false;
+  let lastStartServerRunning = null;
+  let lastRunCount = null;
+  let lastStatus = null;
+  let lastStatusText = null;
+  let lastPlayersText = null;
+  let lastStopAllDisplay = null;
+  function requestRender() {
+    if (renderRequested) return;
+    renderRequested = true;
+    requestAnimationFrame(function () {
+      renderRequested = false;
+      render();
+    });
   }
 
   function render() {
@@ -533,16 +537,29 @@
     var runCount = countRunning();
     var startServerBtn = document.getElementById('start-server');
     if (startServerBtn && s) {
-      startServerBtn.textContent = s.running ? 'Stop Server' : 'Start Server';
-      startServerBtn.className = s.running ? 'btn btn-start btn-stop' : 'btn btn-start';
+      var isRunning = !!s.running;
+      if (lastStartServerRunning !== isRunning) {
+        lastStartServerRunning = isRunning;
+        startServerBtn.textContent = isRunning ? 'Stop Server' : 'Start Server';
+        startServerBtn.className = isRunning ? 'btn btn-start btn-stop' : 'btn btn-start';
+      }
     }
     var startAllBtn = document.getElementById('start-all-servers');
     if (startAllBtn) {
-      startAllBtn.textContent = runCount > 0 ? 'Stop All Servers' : 'Start All Servers';
-      startAllBtn.className = runCount > 0 ? 'btn btn-sm btn-stop' : 'btn btn-sm';
+      if (lastRunCount !== runCount) {
+        lastRunCount = runCount;
+        startAllBtn.textContent = runCount > 0 ? 'Stop All Servers' : 'Start All Servers';
+        startAllBtn.className = runCount > 0 ? 'btn btn-sm btn-stop' : 'btn btn-sm';
+      }
     }
     var stopAllBtn = document.getElementById('stop-all-servers');
-    if (stopAllBtn) stopAllBtn.style.display = runCount > 1 ? '' : 'none';
+    if (stopAllBtn) {
+      var stopAllDisplay = runCount > 1 ? '' : 'none';
+      if (lastStopAllDisplay !== stopAllDisplay) {
+        lastStopAllDisplay = stopAllDisplay;
+        stopAllBtn.style.display = stopAllDisplay;
+      }
+    }
     var statusDot = document.getElementById('server-status-dot');
     var statusText = document.getElementById('server-status-text');
     var playersEl = document.getElementById('server-status-players');
@@ -551,15 +568,25 @@
       if (state.serverError) status = 'error';
       else if (state.serverStarting) status = 'starting';
       else if (s && s.running) status = 'online';
-      statusDot.className = 'server-status-dot status-' + status;
-      statusText.textContent = status === 'online' ? 'Online' : status === 'starting' ? 'Starting' : status === 'error' ? 'Error' : 'Stopped';
+      if (lastStatus !== status) {
+        lastStatus = status;
+        statusDot.className = 'server-status-dot status-' + status;
+        statusText.textContent = status === 'online' ? 'Online' : status === 'starting' ? 'Starting' : status === 'error' ? 'Error' : 'Stopped';
+      }
       if (playersEl) {
-        playersEl.textContent = status === 'online'
+        var playersText = status === 'online'
           ? (state.playerCount.active + ' / ' + state.playerCount.total)
           : '-- / --';
+        if (lastPlayersText !== playersText) {
+          lastPlayersText = playersText;
+          playersEl.textContent = playersText;
+        }
       }
     }
-    if (playersEl && !statusDot) playersEl.textContent = '-- / --';
+    if (playersEl && !statusDot && lastPlayersText !== '-- / --') {
+      lastPlayersText = '-- / --';
+      playersEl.textContent = '-- / --';
+    }
 
     if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
       clearInterval(window._playerPollTimer);
@@ -864,11 +891,12 @@
     performSave();
   });
 
-  function showMessage(msg, isError) {
+  function showMessage(msg, isErrorOrType) {
     var el = document.getElementById('message-banner');
     if (!el) return;
     el.textContent = msg || '';
-    el.className = 'message-banner' + (isError ? ' error' : (msg ? ' success' : ''));
+    var suffix = isErrorOrType === true ? ' error' : (isErrorOrType === 'warning' ? ' warning' : (msg ? ' success' : ''));
+    el.className = 'message-banner' + suffix;
     if (msg) setTimeout(function () { el.textContent = ''; el.className = 'message-banner'; }, 3000);
   }
 
@@ -889,6 +917,26 @@
         }));
         ipcLog('Stop Server', state.selectedServerIndex);
       } else {
+        var path = s.use_sabre_squadron ? (s.hd2ds_sabresquadron_path || '') : (s.hd2ds_path || '');
+        if (!path.trim()) {
+          state.serverStarting = false;
+          state.serverError = false;
+          showMessage('Failed to start - missing executable path!', true);
+          render();
+          return;
+        }
+        var mpmaplist = (s.mpmaplist_path || '').trim();
+        if (!mpmaplist) {
+          state.serverStarting = false;
+          state.serverError = false;
+          showMessage('Failed to start - set the maplist path in server settings first.', true);
+          render();
+          return;
+        }
+        var c = getSelectedConfig();
+        if (c && (!c.maps || c.maps.length === 0)) {
+          showMessage('No maps in rotation – add maps in General before starting.', 'warning');
+        }
         state.serverError = false;
         state.serverStarting = true;
         render();
@@ -1030,11 +1078,29 @@
     renderMapList();
   });
 
+  document.getElementById('available-map-list')?.addEventListener('click', function (e) {
+    const li = e.target.closest('li[data-index]');
+    if (!li) return;
+    selectedAvailableMapIndex = parseInt(li.dataset.index, 10);
+    renderAvailableMapList();
+  });
+  document.getElementById('map-list')?.addEventListener('click', function (e) {
+    const li = e.target.closest('li[data-index]');
+    if (!li) return;
+    selectedMapIndex = parseInt(li.dataset.index, 10);
+    renderMapList();
+  });
   document.getElementById('ban-list')?.addEventListener('click', function (e) {
     const li = e.target.closest('li[data-index]');
     if (!li) return;
-    selectedBanIndex = parseInt(li.dataset.index, 10);
+    selectedBanIndex = parseInt(li.getAttribute('data-index'), 10);
     renderBanList();
+  });
+
+  const BAN_REASON_MAX = 21;
+  document.getElementById('ban-list-add-comment')?.addEventListener('input', function () {
+    const el = document.getElementById('ban-list-add-comment-counter');
+    if (el) el.textContent = (this.value || '').length + '/' + BAN_REASON_MAX;
   });
   document.getElementById('ban-list-add')?.addEventListener('click', function () {
     const c = getSelectedConfig();
@@ -1043,12 +1109,12 @@
     if (!c || !ipEl) return;
     const ip = (ipEl.value || '').trim();
     if (!ip) return;
-    const comment = commentEl ? (commentEl.value || '').trim() : '';
+    const comment = commentEl ? (commentEl.value || '').trim().slice(0, BAN_REASON_MAX) : '';
     const entry = comment ? ip + ':>' + comment : ip;
     c.ban_list = c.ban_list || [];
     c.ban_list.push(entry);
     ipEl.value = '';
-    if (commentEl) commentEl.value = '';
+    if (commentEl) { commentEl.value = ''; const counterEl = document.getElementById('ban-list-add-comment-counter'); if (counterEl) counterEl.textContent = '0/' + BAN_REASON_MAX; }
     selectedBanIndex = c.ban_list.length - 1;
     setUnsaved(true);
     renderBanList();
@@ -1063,14 +1129,41 @@
     renderBanList();
   });
 
-  document.getElementById('current-players-table')?.addEventListener('click', function (e) {
+  document.getElementById('current-players-tbody')?.addEventListener('click', function (e) {
+    const banBtn = e.target.closest('.btn-ban-row');
+    if (banBtn) {
+      const ip = (banBtn.getAttribute('data-ip') || '').trim();
+      if (ip) {
+        const c = getSelectedConfig();
+        if (c) {
+          c.ban_list = c.ban_list || [];
+          if (c.ban_list.indexOf(ip) === -1) {
+            c.ban_list.push(ip + ':>' + 'Banned from current players'.slice(0, BAN_REASON_MAX));
+            selectedBanIndex = c.ban_list.length - 1;
+            setUnsaved(true);
+            renderBanList();
+            renderCurrentPlayersTable();
+          }
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     const cell = e.target.closest('.player-ip-cell:not(.revealed)');
-    if (!cell || cell.dataset.index === undefined) return;
-    var i = parseInt(cell.dataset.index, 10);
-    if (isNaN(i)) return;
-    state.playerListRevealed = state.playerListRevealed || {};
-    state.playerListRevealed[i] = true;
-    renderCurrentPlayersTable();
+    if (cell) {
+      const idx = cell.getAttribute('data-index');
+      if (idx !== null && idx !== '') {
+        var i = parseInt(idx, 10);
+        if (!isNaN(i)) {
+          state.playerListRevealed = state.playerListRevealed || {};
+          state.playerListRevealed[i] = true;
+          renderCurrentPlayersTable();
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    }
   });
   document.getElementById('whitelist-list')?.addEventListener('click', function (e) {
     const li = e.target.closest('li[data-index]');
@@ -1113,8 +1206,8 @@
     render();
   });
 
-  document.querySelector('.content')?.addEventListener('input', function () { setUnsaved(true); });
-  document.querySelector('.content')?.addEventListener('change', function () { setUnsaved(true); });
+  document.querySelector('.content')?.addEventListener('input', function () { bindConfigToForm(); setUnsaved(true); });
+  document.querySelector('.content')?.addEventListener('change', function () { bindConfigToForm(); setUnsaved(true); });
 
   document.querySelectorAll('.tab').forEach(tab => {
     const orig = tab.onclick;
@@ -1158,7 +1251,7 @@
           state.servers = next;
           setUnsaved(false);
           showMessage('Saved');
-          render();
+          requestRender();
           requestHostRepaint();
         }
       } catch (e) { showMessage('Save failed.', true); }
@@ -1170,7 +1263,7 @@
           state.servers = next;
           setUnsaved(false);
           showMessage('Maps loaded');
-          render();
+          requestRender();
           requestHostRepaint();
         }
       } catch (e) { showMessage('Refresh failed.', true); }
@@ -1182,14 +1275,14 @@
       var idx = state.selectedServerIndex;
       if (state.servers[idx]) state.servers[idx].running = true;
       requestRunningState();
-      render();
+      requestRender();
     } else if (msg === 'All servers started') {
       showMessage('Started');
       state.serverStarting = false;
       state.serverError = false;
       state.servers.forEach(function (s) { s.running = true; });
       requestRunningState();
-      render();
+      requestRender();
     } else if (msg === 'Stopped OK') {
       showMessage('Stopped');
       state.serverStarting = false;
@@ -1197,13 +1290,13 @@
       var idx = state.selectedServerIndex;
       if (state.servers[idx]) state.servers[idx].running = false;
       requestRunningState();
-      render();
+      requestRender();
     } else if (msg === 'All servers stopped') {
       showMessage('Stopped');
       state.servers.forEach(function (s) { s.running = false; });
       state.playerCount = { active: '--', total: '--' };
       requestRunningState();
-      render();
+      requestRender();
     } else if (msg && msg.startsWith('RUNNING:')) {
       try {
         state.serverStarting = false;
@@ -1213,7 +1306,7 @@
           state.servers.forEach(function (s) {
             s.running = ports.indexOf(s.port) !== -1;
           });
-          render();
+          requestRender();
         }
       } catch (e) { /* ignore */ }
     } else if (msg && msg.startsWith('PLAYERS:')) {
@@ -1221,15 +1314,15 @@
       var parts = part.split(',');
       if (parts.length >= 2) {
         state.playerCount = { active: parts[0].trim(), total: parts[1].trim() };
-        render();
+        requestRender();
       }
     } else if (msg && msg.startsWith('PLAYER_LIST:')) {
       try {
         var json = msg.slice(12);
         var list = JSON.parse(json);
         state.currentPlayerList = Array.isArray(list) ? list : [];
-        render();
-      } catch (e) { state.currentPlayerList = []; render(); }
+        requestRender();
+      } catch (e) { state.currentPlayerList = []; requestRender(); }
     } else if (msg && msg.indexOf('LOG_CONTENT:') === 0) {
       var logEl = document.getElementById('log-content');
       if (logEl) logEl.textContent = msg.slice('LOG_CONTENT:'.length);
@@ -1243,10 +1336,10 @@
       if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
         try {
           window.ipc.postMessage(JSON.stringify({ action: 'refresh_mpmaplist', servers: state.servers }));
-        } catch (err) { showMessage('Maps loaded'); render(); }
+        } catch (err) { showMessage('Maps loaded'); requestRender(); }
       } else {
         showMessage('The mpmaplist has been set successfully.');
-        render();
+        requestRender();
       }
     } else if (msg && msg.indexOf('MPMAPLIST_PATH_INVALID:') === 0) {
       showMessage(msg.slice('MPMAPLIST_PATH_INVALID:'.length), true);
@@ -1262,7 +1355,7 @@
       if (state.serverStarting) {
         state.serverStarting = false;
         state.serverError = true;
-        render();
+        requestRender();
       }
       showMessage(msg, true);
     }
