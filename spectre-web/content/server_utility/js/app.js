@@ -66,6 +66,12 @@
     }
   };
 
+  // Cache of last player list payload to avoid unnecessary re-renders while a server is running.
+  // This helps keep click interactions on the players table responsive even when IPC is polling.
+  let lastPlayerListJson = null;
+  // Track whether we currently have a running player poll interval attached.
+  let lastPlayerPollRunning = false;
+
   function ipcLog(msg, detail) {
     console.log('[IPC JS] ' + msg, detail !== undefined ? detail : '');
   }
@@ -588,22 +594,37 @@
       playersEl.textContent = '-- / --';
     }
 
-    if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
-      clearInterval(window._playerPollTimer);
-      window._playerPollTimer = null;
-    }
-    if (s && s.running && typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      function requestPlayers() {
-        try {
-          window.ipc.postMessage(JSON.stringify({
-            action: 'get_players',
-            server_index: state.selectedServerIndex,
-            servers: state.servers
-          }));
-        } catch (e) {}
+    // Manage player polling interval only when the running state changes,
+    // instead of on every render, to avoid flooding IPC and starving UI events.
+    var isRunningFlag = !!(s && s.running);
+    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
+      if (isRunningFlag && !lastPlayerPollRunning) {
+        function requestPlayers() {
+          try {
+            window.ipc.postMessage(JSON.stringify({
+              action: 'get_players',
+              server_index: state.selectedServerIndex,
+              servers: state.servers
+            }));
+          } catch (e) {}
+        }
+        requestPlayers();
+        window._playerPollTimer = setInterval(requestPlayers, 2000);
+        lastPlayerPollRunning = true;
+      } else if (!isRunningFlag && lastPlayerPollRunning) {
+        if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
+          clearInterval(window._playerPollTimer);
+          window._playerPollTimer = null;
+        }
+        lastPlayerPollRunning = false;
       }
-      requestPlayers();
-      window._playerPollTimer = setInterval(requestPlayers, 2000);
+    } else {
+      // No IPC – ensure no stray interval is left running.
+      if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
+        clearInterval(window._playerPollTimer);
+        window._playerPollTimer = null;
+      }
+      lastPlayerPollRunning = false;
     }
   }
 
@@ -1078,23 +1099,77 @@
     renderMapList();
   });
 
-  document.getElementById('available-map-list')?.addEventListener('click', function (e) {
-    const li = e.target.closest('li[data-index]');
-    if (!li) return;
-    selectedAvailableMapIndex = parseInt(li.dataset.index, 10);
-    renderAvailableMapList();
-  });
-  document.getElementById('map-list')?.addEventListener('click', function (e) {
-    const li = e.target.closest('li[data-index]');
-    if (!li) return;
-    selectedMapIndex = parseInt(li.dataset.index, 10);
-    renderMapList();
-  });
-  document.getElementById('ban-list')?.addEventListener('click', function (e) {
-    const li = e.target.closest('li[data-index]');
-    if (!li) return;
-    selectedBanIndex = parseInt(li.getAttribute('data-index'), 10);
-    renderBanList();
+  // Global click delegation for map/ban/whitelist/player rows so interactions
+  // keep working even when lists are re-rendered frequently while a server runs.
+  document.addEventListener('click', function (e) {
+    const mapAvailLi = e.target.closest('#available-map-list li[data-index]');
+    if (mapAvailLi) {
+      const idx = parseInt(mapAvailLi.dataset.index, 10);
+      ipcLog('Available map click', 'index=' + idx + ' text=' + mapAvailLi.textContent);
+      selectedAvailableMapIndex = idx;
+      renderAvailableMapList();
+      return;
+    }
+    const mapLi = e.target.closest('#map-list li[data-index]');
+    if (mapLi) {
+      const idx = parseInt(mapLi.dataset.index, 10);
+      ipcLog('Rotation map click', 'index=' + idx + ' text=' + mapLi.textContent);
+      selectedMapIndex = idx;
+      renderMapList();
+      return;
+    }
+    const banLi = e.target.closest('#ban-list li[data-index]');
+    if (banLi) {
+      const idx = parseInt(banLi.getAttribute('data-index'), 10);
+      ipcLog('Banlist row click', 'index=' + idx + ' text=' + banLi.textContent);
+      selectedBanIndex = idx;
+      renderBanList();
+      return;
+    }
+    const wlLi = e.target.closest('#whitelist-list li[data-index]');
+    if (wlLi) {
+      const idx = parseInt(wlLi.dataset.index, 10);
+      ipcLog('Whitelist row click', 'index=' + idx + ' text=' + wlLi.textContent);
+      selectedWhitelistIndex = idx;
+      renderWhitelist();
+      return;
+    }
+    const banBtn = e.target.closest('.btn-ban-row');
+    if (banBtn && document.getElementById('current-players-tbody')?.contains(banBtn)) {
+      const ip = (banBtn.getAttribute('data-ip') || '').trim();
+      if (ip) {
+        ipcLog('Player Ban click', ip);
+        const c = getSelectedConfig();
+        if (c) {
+          c.ban_list = c.ban_list || [];
+          if (c.ban_list.indexOf(ip) === -1) {
+            c.ban_list.push(ip + ':>' + 'Unspecified ban'.slice(0, BAN_REASON_MAX));
+            selectedBanIndex = c.ban_list.length - 1;
+            setUnsaved(true);
+            renderBanList();
+            renderCurrentPlayersTable();
+          }
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
+    const cell = e.target.closest('.player-ip-cell:not(.revealed)');
+    if (cell && document.getElementById('current-players-tbody')?.contains(cell)) {
+      const idx = cell.getAttribute('data-index');
+      if (idx !== null && idx !== '') {
+        var i = parseInt(idx, 10);
+        if (!isNaN(i)) {
+          ipcLog('Player Reveal click', 'row=' + i);
+          state.playerListRevealed = state.playerListRevealed || {};
+          state.playerListRevealed[i] = true;
+          renderCurrentPlayersTable();
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    }
   });
 
   const BAN_REASON_MAX = 21;
@@ -1129,48 +1204,8 @@
     renderBanList();
   });
 
-  document.getElementById('current-players-tbody')?.addEventListener('click', function (e) {
-    const banBtn = e.target.closest('.btn-ban-row');
-    if (banBtn) {
-      const ip = (banBtn.getAttribute('data-ip') || '').trim();
-      if (ip) {
-        const c = getSelectedConfig();
-        if (c) {
-          c.ban_list = c.ban_list || [];
-          if (c.ban_list.indexOf(ip) === -1) {
-            c.ban_list.push(ip + ':>' + 'Banned from current players'.slice(0, BAN_REASON_MAX));
-            selectedBanIndex = c.ban_list.length - 1;
-            setUnsaved(true);
-            renderBanList();
-            renderCurrentPlayersTable();
-          }
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-    }
-    const cell = e.target.closest('.player-ip-cell:not(.revealed)');
-    if (cell) {
-      const idx = cell.getAttribute('data-index');
-      if (idx !== null && idx !== '') {
-        var i = parseInt(idx, 10);
-        if (!isNaN(i)) {
-          state.playerListRevealed = state.playerListRevealed || {};
-          state.playerListRevealed[i] = true;
-          renderCurrentPlayersTable();
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }
-    }
-  });
-  document.getElementById('whitelist-list')?.addEventListener('click', function (e) {
-    const li = e.target.closest('li[data-index]');
-    if (!li) return;
-    selectedWhitelistIndex = parseInt(li.dataset.index, 10);
-    renderWhitelist();
-  });
+  // whitelist events keep their own click handlers for add/remove;
+  // row selection is handled by the global click delegate above.
   document.getElementById('whitelist-add')?.addEventListener('click', function () {
     const c = getSelectedConfig();
     const ipEl = document.getElementById('whitelist-add-ip');
@@ -1319,10 +1354,16 @@
     } else if (msg && msg.startsWith('PLAYER_LIST:')) {
       try {
         var json = msg.slice(12);
+        // If the player list hasn't changed since last time, skip updating state/rendering.
+        if (json === lastPlayerListJson) return;
+        lastPlayerListJson = json;
         var list = JSON.parse(json);
         state.currentPlayerList = Array.isArray(list) ? list : [];
         requestRender();
-      } catch (e) { state.currentPlayerList = []; requestRender(); }
+      } catch (e) {
+        state.currentPlayerList = [];
+        requestRender();
+      }
     } else if (msg && msg.indexOf('LOG_CONTENT:') === 0) {
       var logEl = document.getElementById('log-content');
       if (logEl) logEl.textContent = msg.slice('LOG_CONTENT:'.length);

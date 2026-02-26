@@ -99,6 +99,7 @@ unsafe extern "system" fn enum_callback(
 }
 
 /// Types a command into the DS console window (PostMessage WM_CHAR + Enter).
+/// This focuses the DS console briefly so keyboard input is accepted.
 pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str) {
     let _ = unsafe { SetForegroundWindow(hwnd) };
     std::thread::sleep(std::time::Duration::from_millis(120));
