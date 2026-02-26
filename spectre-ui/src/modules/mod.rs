@@ -19,4 +19,3 @@ pub trait Module {
     fn name(&self) -> &str;
     fn show(&mut self, ctx: &egui::Context, ui: &mut egui::Ui);
 }
-

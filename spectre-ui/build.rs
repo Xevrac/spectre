@@ -11,9 +11,9 @@ fn embed_windows_icon() {
     use std::fs::File;
     use std::io::Write;
     use std::path::Path;
-    
+
     let icon_path = "spectre_256.png";
-    
+
     if Path::new(icon_path).exists() {
         if let Ok(icon_data) = std::fs::read(icon_path) {
             if let Ok(img) = image::load_from_memory(&icon_data) {
@@ -56,9 +56,9 @@ fn embed_windows_icon() {
                         let row_end = row_start + (width * 4) as usize;
                         bmp_data.extend_from_slice(&pixels[row_start..row_end]);
                     }
-                    
+
                     ico_data.extend_from_slice(&bmp_data);
-                    
+
                     if file.write_all(&ico_data).is_ok() {
                         let mut res = winres::WindowsResource::new();
                         res.set_icon(&ico_path.to_string_lossy());
@@ -74,9 +74,9 @@ fn increment_version() {
     use std::fs;
     use std::io::Write;
     use std::path::Path;
-    
+
     let cargo_toml_path = Path::new("Cargo.toml");
-    
+
     if let Ok(contents) = fs::read_to_string(cargo_toml_path) {
         if let Ok(mut doc) = toml::from_str::<toml::Value>(&contents) {
             if let Some(package) = doc.get_mut("package").and_then(|p| p.as_table_mut()) {
@@ -90,11 +90,17 @@ fn increment_version() {
                         ) {
                             let new_patch = patch + 1;
                             let new_version = format!("{}.{}.{}", major, minor, new_patch);
-                            package.insert("version".to_string(), toml::Value::String(new_version.clone()));
+                            package.insert(
+                                "version".to_string(),
+                                toml::Value::String(new_version.clone()),
+                            );
                             if let Ok(toml_string) = toml::to_string_pretty(&doc) {
                                 if let Ok(mut file) = fs::File::create(cargo_toml_path) {
                                     if file.write_all(toml_string.as_bytes()).is_ok() {
-                                        println!("cargo:warning=Version incremented to {}", new_version);
+                                        println!(
+                                            "cargo:warning=Version incremented to {}",
+                                            new_version
+                                        );
                                     }
                                 }
                             }
@@ -105,4 +111,3 @@ fn increment_version() {
         }
     }
 }
-

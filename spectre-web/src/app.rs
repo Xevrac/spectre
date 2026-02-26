@@ -1,4 +1,3 @@
-
 #![cfg(windows)]
 
 use std::sync::Arc;
@@ -16,7 +15,6 @@ impl AppState {
         Self::default()
     }
 }
-
 
 const SERVER_UTILITY_HTML: &str = include_str!("../content/server_utility/index.html");
 const SERVER_UTILITY_CSS: &str = include_str!("../content/server_utility/css/style.css");
@@ -49,16 +47,26 @@ fn embed_server_utility(initial_state_json: Option<&str>, debug_mode: bool) -> S
         )
         .replace(
             r#"<script src="js/app.js"></script>"#,
-            &format!("{}{}<script>{}</script>", initial_script, debug_script, SERVER_UTILITY_JS),
+            &format!(
+                "{}{}<script>{}</script>",
+                initial_script, debug_script, SERVER_UTILITY_JS
+            ),
         )
 }
 
 /// Inlined HTML for a card by name (embedded at build time).
 /// When debug_mode is true, the card may show extra debug-only controls (e.g. emulate watchdog restart).
-pub fn embedded_card_html(card_name: &str, initial_state_json: Option<&str>, debug_mode: bool) -> Result<String, String> {
+pub fn embedded_card_html(
+    card_name: &str,
+    initial_state_json: Option<&str>,
+    debug_mode: bool,
+) -> Result<String, String> {
     match card_name {
         "server_utility" => Ok(embed_server_utility(initial_state_json, debug_mode)),
-        _ => Err(format!("Unknown card: '{}'. Cards are built into the binary at compile time.", card_name)),
+        _ => Err(format!(
+            "Unknown card: '{}'. Cards are built into the binary at compile time.",
+            card_name
+        )),
     }
 }
 

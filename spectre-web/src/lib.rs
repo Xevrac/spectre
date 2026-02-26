@@ -1,4 +1,3 @@
-
 #![cfg_attr(windows, doc = "Windows WebView2 host and app runner.")]
 #![cfg_attr(not(windows), doc = "Stub when not on Windows.")]
 
@@ -19,7 +18,11 @@ pub fn run_app_with_card(_card_name: &str) -> Result<(), String> {
     Err("spectre-web is only supported on Windows (WebView2).".to_string())
 }
 #[cfg(not(windows))]
-pub fn embedded_card_html(_card_name: &str, _initial_state_json: Option<&str>, _debug_mode: bool) -> Result<String, String> {
+pub fn embedded_card_html(
+    _card_name: &str,
+    _initial_state_json: Option<&str>,
+    _debug_mode: bool,
+) -> Result<String, String> {
     Err("spectre-web is only supported on Windows (WebView2).".to_string())
 }
 #[cfg(not(windows))]

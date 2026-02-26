@@ -19,4 +19,3 @@ impl Module for DtaUnpacker {
         ui.label("This module will unpack DTA files.");
     }
 }
-

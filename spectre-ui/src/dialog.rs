@@ -116,7 +116,7 @@ impl DialogBuilder {
                 ctx.screen_rect().size()
             }
         });
-        
+
         let (dialog_width, dialog_height, dialog_pos) = if self.fullscreen {
             let width = window_size.x;
             let height = window_size.y;
@@ -134,7 +134,7 @@ impl DialogBuilder {
                 .min(max_allowed_height)
                 .max(self.min_height.min(max_allowed_height))
                 .min(self.max_height.min(max_allowed_height));
-            
+
             let center_x = (window_size.x - width) / 2.0;
             let center_y = window_size.y - self.bottom_margin - height;
             let pos = egui::pos2(center_x, center_y);
@@ -159,7 +159,9 @@ impl DialogBuilder {
                         ui.set_width(content_width);
 
                         let footer_height = 60.0;
-                        let min_content_height = (available_height - footer_height - self.header_footer_space).max(400.0);
+                        let min_content_height =
+                            (available_height - footer_height - self.header_footer_space)
+                                .max(400.0);
                         ui.set_min_height(min_content_height);
 
                         let scroll_height = ui.available_height();

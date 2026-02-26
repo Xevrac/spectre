@@ -11,7 +11,8 @@ const STYLE_TAG_TO_NAME: &[(&str, &str)] = &[
 
 pub fn resolve_mpmaplist_path(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
-    let ends_with_file = s.ends_with("mpmaplist.txt") || s.ends_with("mpmaplist.TXT")
+    let ends_with_file = s.ends_with("mpmaplist.txt")
+        || s.ends_with("mpmaplist.TXT")
         || s.ends_with("mpmaplist.Txt");
     if ends_with_file && path.exists() && !path.is_dir() {
         path.to_path_buf()
@@ -77,10 +78,7 @@ pub fn parse_mpmaplist(content: &str) -> HashMap<String, Vec<String>> {
             if let Some(name) = extract_attr(&lower, trimmed, "name") {
                 if !name.is_empty() {
                     if let Some(ref tag) = current_tag {
-                        by_tag
-                            .entry(tag.clone())
-                            .or_default()
-                            .push(name);
+                        by_tag.entry(tag.clone()).or_default().push(name);
                     }
                 }
             }
@@ -110,7 +108,10 @@ mod tests {
 <map name="dm_01">
 "#;
         let m = parse_mpmaplist(s);
-        assert_eq!(m.get("Occupation"), Some(&vec!["map_01".to_string(), "map_02".to_string()]));
+        assert_eq!(
+            m.get("Occupation"),
+            Some(&vec!["map_01".to_string(), "map_02".to_string()])
+        );
         assert_eq!(m.get("Deathmatch"), Some(&vec!["dm_01".to_string()]));
     }
 }

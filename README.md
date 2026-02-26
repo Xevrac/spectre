@@ -3,6 +3,13 @@
 # Spectre
 Spectre is a work in progress toolkit for Hidden &amp; Dangerous 2.
 
+## System requirements (Windows)
+
+- **Windows 10 or later (64-bit)**
+- **WebView2 Runtime** — [install](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section) if the app won’t start (Windows 11 has it; many Windows 10 builds don’t).
+- **Graphics** — On Windows: wgpu (DX12) with LowPower. If no adapter is found, the app tries in order: wgpu+OpenGL, WARP, OpenGL (Glow), then the CPU software renderer.
+- **VC++ Redistributable (x64)** — Usually present; [install](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) if you see DLL errors.
+
 # Features
 ## Tools
 - Server Utility 🏗️

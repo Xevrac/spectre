@@ -178,8 +178,8 @@ impl ServerLauncherData {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
         let data: ServerLauncherData =
             serde_json::from_str(&content).map_err(|e| format!("Invalid config JSON: {}", e))?;
         Ok(data)
@@ -189,8 +189,7 @@ impl ServerLauncherData {
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(path, content)
-            .map_err(|e| format!("Failed to write config file: {}", e))
+        fs::write(path, content).map_err(|e| format!("Failed to write config file: {}", e))
     }
 }
 
@@ -220,5 +219,3 @@ impl Default for ServerLauncherData {
         }
     }
 }
-
-

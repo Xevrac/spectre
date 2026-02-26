@@ -1,0 +1,29 @@
+[package]
+edition = "2021"
+rust-version = "1.72"
+name = "egui-wgpu"
+version = "0.27.2"
+description = "Bindings for using egui natively using the wgpu library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/emilk/egui/tree/master/crates/egui-wgpu"
+
+[dependencies]
+bytemuck = "1.7"
+egui = { version = "0.27.2", default-features = false }
+epaint = { version = "0.27.2", default-features = false, features = ["bytemuck"] }
+log = "0.4"
+thiserror = "1.0.37"
+type-map = "0.5.0"
+web-time = "0.2"
+wgpu = { version = "0.19.1", features = ["fragile-send-sync-non-atomic-wasm", "wgsl"], default-features = false }
+winit = { version = "0.29.4", optional = true, default-features = false, features = ["rwh_06"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+puffin = { version = "0.19", optional = true }
+
+[features]
+default = []
+puffin = ["dep:puffin"]
+wayland = ["winit?/wayland"]
+winit = ["dep:winit"]
+x11 = ["winit?/x11"]

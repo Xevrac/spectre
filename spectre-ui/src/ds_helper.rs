@@ -37,7 +37,8 @@ pub fn find_main_window_by_pid(pid: u32) -> Option<windows::Win32::Foundation::H
 static mut g_enum_pid: u32 = 0;
 const MAX_WINDOWS: usize = 16;
 #[allow(non_upper_case_globals)]
-static mut g_enum_hwnds: [Option<windows::Win32::Foundation::HWND>; MAX_WINDOWS] = [None; MAX_WINDOWS];
+static mut g_enum_hwnds: [Option<windows::Win32::Foundation::HWND>; MAX_WINDOWS] =
+    [None; MAX_WINDOWS];
 #[allow(non_upper_case_globals)]
 static mut g_enum_count: usize = 0;
 
@@ -59,7 +60,9 @@ fn get_window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
     String::from_utf16_lossy(&buf[..(len as usize).min(buf.len())])
 }
 
-fn pick_best_window(hwnds: &[windows::Win32::Foundation::HWND]) -> Option<windows::Win32::Foundation::HWND> {
+fn pick_best_window(
+    hwnds: &[windows::Win32::Foundation::HWND],
+) -> Option<windows::Win32::Foundation::HWND> {
     let mut fallback = None;
     for &hwnd in hwnds {
         if hwnd.0.is_null() {
@@ -106,14 +109,7 @@ pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str)
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
-    let _ = unsafe {
-        PostMessageW(
-            hwnd,
-            WM_KEYDOWN,
-            WPARAM(VK_RETURN.0 as _),
-            LPARAM(0),
-        )
-    };
+    let _ = unsafe { PostMessageW(hwnd, WM_KEYDOWN, WPARAM(VK_RETURN.0 as _), LPARAM(0)) };
     std::thread::sleep(std::time::Duration::from_millis(60));
 }
 
@@ -181,12 +177,20 @@ pub fn read_player_slots(process_handle: HANDLE) -> Option<Vec<(String, String)>
         let ip_bytes: [u8; 4] = buffer[base + SLOT_IP_OFFSET..base + SLOT_IP_OFFSET + 4]
             .try_into()
             .unwrap_or([0, 0, 0, 0]);
-        let ip = format!("{}.{}.{}.{}", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+        let ip = format!(
+            "{}.{}.{}.{}",
+            ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+        );
         let name_start = base + SLOT_NAME_OFFSET;
         let name_end = (name_start + NAME_MAX).min(buffer.len());
         let name_slice = &buffer[name_start..name_end];
-        let nul = name_slice.iter().position(|&b| b == 0).unwrap_or(name_slice.len());
-        let name = String::from_utf8_lossy(&name_slice[..nul]).trim().to_string();
+        let nul = name_slice
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(name_slice.len());
+        let name = String::from_utf8_lossy(&name_slice[..nul])
+            .trim()
+            .to_string();
         slots.push((name, ip));
     }
     Some(slots)
@@ -201,13 +205,20 @@ fn entry_ip(entry: &str) -> &str {
 }
 
 fn entry_comment(entry: &str) -> Option<&str> {
-    entry.find(":>").map(|pos| entry[pos + 2..].trim()).filter(|s| !s.is_empty())
+    entry
+        .find(":>")
+        .map(|pos| entry[pos + 2..].trim())
+        .filter(|s| !s.is_empty())
 }
 
 pub const ASA_MAX_LEN: usize = 43;
 pub const BAN_REASON_MAX_LEN: usize = 21;
 
-fn asay_message_for_kick(player_name: &str, kick_reason: &str, matching_entry: Option<&str>) -> String {
+fn asay_message_for_kick(
+    player_name: &str,
+    kick_reason: &str,
+    matching_entry: Option<&str>,
+) -> String {
     let name = player_name.trim();
     let msg = if kick_reason == "not in whitelist" {
         format!("{} not in whitelist.", name)
@@ -231,8 +242,8 @@ pub fn enforce_player_lists(
     _use_sabre_squadron: bool,
 ) -> Result<Vec<(String, String)>, String> {
     let access = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION;
-    let handle = unsafe { OpenProcess(access, false, pid) }
-        .map_err(|e| format!("OpenProcess: {}", e))?;
+    let handle =
+        unsafe { OpenProcess(access, false, pid) }.map_err(|e| format!("OpenProcess: {}", e))?;
     let slots = match read_player_slots(handle) {
         Some(s) => s,
         None => {
@@ -266,7 +277,8 @@ pub fn enforce_player_lists(
     let current_names: HashSet<String> = current_connected.iter().map(|(n, _)| n.clone()).collect();
     kicked.retain(|name| current_names.contains(name));
 
-    let should_do_forced_ban = manager.enable_forced_ban_list && !manager.forced_ban_list.is_empty();
+    let should_do_forced_ban =
+        manager.enable_forced_ban_list && !manager.forced_ban_list.is_empty();
     let should_do_ban = !config.ban_list.is_empty();
     let should_do_whitelist = config.enable_whitelist;
 
@@ -276,7 +288,10 @@ pub fn enforce_player_lists(
 
     let hwnd = find_main_window_by_pid(pid);
     if hwnd.is_none() {
-        let msg = format!("[DS-Helper] port {}: Could not find DS window (kick command will not be sent)", port);
+        let msg = format!(
+            "[DS-Helper] port {}: Could not find DS window (kick command will not be sent)",
+            port
+        );
         println!("{}", msg);
         if let Some(log) = log_line {
             log(&msg);

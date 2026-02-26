@@ -70,11 +70,16 @@ mod windows {
                 in_directplay = true;
             }
             if in_directplay {
-                if line_lower.contains("state") && line_lower.contains("enabled") && !line_lower.contains("disabled") {
+                if line_lower.contains("state")
+                    && line_lower.contains("enabled")
+                    && !line_lower.contains("disabled")
+                {
                     return true;
                 }
                 // If we see a new "Feature Name" that doesn't contain DirectPlay, we've left the DirectPlay block
-                if (line_lower.contains("feature name") || line_lower.contains("featurename")) && !line_lower.contains("directplay") {
+                if (line_lower.contains("feature name") || line_lower.contains("featurename"))
+                    && !line_lower.contains("directplay")
+                {
                     in_directplay = false;
                 }
             }
@@ -103,7 +108,11 @@ mod windows {
         println!("[Spectre.dbg] DirectPlay: running detection (DISM/PowerShell)");
         let enabled = directplay_enabled();
         let s = if enabled { "enabled" } else { "disabled" };
-        println!("[Spectre.dbg] DirectPlay: detection result={}, writing to {}", s, path.display());
+        println!(
+            "[Spectre.dbg] DirectPlay: detection result={}, writing to {}",
+            s,
+            path.display()
+        );
         fs::write(path, s).map_err(|e| e.to_string())
     }
 
@@ -123,7 +132,10 @@ mod windows {
             println!("[Spectre.dbg] DirectPlay: DISM enable succeeded");
             return Ok(());
         }
-        println!("[Spectre.dbg] DirectPlay: DISM enable failed: {}", text.trim());
+        println!(
+            "[Spectre.dbg] DirectPlay: DISM enable failed: {}",
+            text.trim()
+        );
         Err(format!("DISM failed: {}", text.trim()))
     }
 
@@ -135,14 +147,17 @@ mod windows {
         sender: std::sync::mpsc::Sender<Result<bool, String>>,
         result_path: PathBuf,
     ) {
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
-        let emulate = cfg!(debug_assertions)
-            && std::env::var("SPECTRE_EMULATE_NO_DIRECTPLAY").is_ok();
+        let exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
+        let emulate =
+            cfg!(debug_assertions) && std::env::var("SPECTRE_EMULATE_NO_DIRECTPLAY").is_ok();
         if emulate {
             println!("[Spectre.dbg] DirectPlay: SPECTRE_EMULATE_NO_DIRECTPLAY set, elevated check will report NOT installed");
         }
-        println!("[Spectre.dbg] DirectPlay: spawning elevated check, result_path={}", result_path.display());
+        println!(
+            "[Spectre.dbg] DirectPlay: spawning elevated check, result_path={}",
+            result_path.display()
+        );
         std::thread::spawn(move || {
             let status = if emulate {
                 runas::Command::new(&exe)
@@ -163,7 +178,10 @@ mod windows {
                     let content = fs::read_to_string(&result_path).unwrap_or_default();
                     let enabled = content.trim().to_lowercase() == "enabled";
                     let _ = fs::remove_file(&result_path);
-                    println!("[Spectre.dbg] DirectPlay: elevated check finished, result={}", if enabled { "enabled" } else { "disabled" });
+                    println!(
+                        "[Spectre.dbg] DirectPlay: elevated check finished, result={}",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
                     Ok(enabled)
                 }
                 Ok(_) => {
@@ -171,7 +189,10 @@ mod windows {
                     Err("Elevated check process exited with an error.".to_string())
                 }
                 Err(e) => {
-                    println!("[Spectre.dbg] DirectPlay: elevated check failed to run: {}", e);
+                    println!(
+                        "[Spectre.dbg] DirectPlay: elevated check failed to run: {}",
+                        e
+                    );
                     Err(e.to_string())
                 }
             };
@@ -181,8 +202,8 @@ mod windows {
 
     /// Spawn a thread that requests UAC and enables DirectPlay in an elevated process.
     pub fn spawn_elevated_install_directplay(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
+        let exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
         std::thread::spawn(move || {
             let status = runas::Command::new(&exe)
                 .arg("--elevated-install-directplay")
@@ -216,14 +237,22 @@ mod windows {
 
     /// Apply the registry fix. Requires administrator rights.
     pub fn apply_registry_fix() -> Result<(), String> {
-        println!("[Spectre.dbg] Registry fix: applying IPAddressFamilySettings to {}", REG_PATH);
+        println!(
+            "[Spectre.dbg] Registry fix: applying IPAddressFamilySettings to {}",
+            REG_PATH
+        );
         use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_WRITE};
         use winreg::RegKey;
 
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         let (key, _) = hklm
             .create_subkey_with_flags(REG_PATH, KEY_WRITE)
-            .map_err(|e| format!("Registry create/open failed: {} (try running as Administrator)", e))?;
+            .map_err(|e| {
+                format!(
+                    "Registry create/open failed: {} (try running as Administrator)",
+                    e
+                )
+            })?;
         key.set_value(REG_VALUE_HD2DS, &REG_REQUIRED)
             .map_err(|e| format!("Set HD2DS: {}", e))?;
         key.set_value(REG_VALUE_HD2DS_SS, &REG_REQUIRED)
@@ -252,7 +281,11 @@ mod windows {
 
     fn hosts_file_path() -> PathBuf {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-        PathBuf::from(root).join("System32").join("drivers").join("etc").join("hosts")
+        PathBuf::from(root)
+            .join("System32")
+            .join("drivers")
+            .join("etc")
+            .join("hosts")
     }
 
     /// Returns true if the line contains any of our GameSpy hostnames as a word (any IP).
@@ -303,9 +336,16 @@ mod windows {
     /// Requires administrator rights.
     pub fn apply_gamepy_hosts() -> Result<(), String> {
         let path = hosts_file_path();
-        println!("[Spectre.dbg] GameSpy hosts: applying to {}", path.display());
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Cannot read hosts file: {} (try running as Administrator)", e))?;
+        println!(
+            "[Spectre.dbg] GameSpy hosts: applying to {}",
+            path.display()
+        );
+        let content = fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "Cannot read hosts file: {} (try running as Administrator)",
+                e
+            )
+        })?;
 
         // Keep only lines that do not contain any of our GameSpy hostnames (so we remove old IP or partial entries)
         let kept: Vec<&str> = content
@@ -324,8 +364,12 @@ mod windows {
             new_content.push_str(&format!("{}  {}\n", GAMESPY_IP, host));
         }
 
-        fs::write(&path, new_content)
-            .map_err(|e| format!("Cannot write hosts file: {} (try running as Administrator)", e))?;
+        fs::write(&path, new_content).map_err(|e| {
+            format!(
+                "Cannot write hosts file: {} (try running as Administrator)",
+                e
+            )
+        })?;
         println!("[Spectre.dbg] GameSpy hosts: applied successfully");
         Ok(())
     }
@@ -333,8 +377,8 @@ mod windows {
     /// Spawn a thread that requests UAC and runs the registry fix in an elevated process.
     /// Sends the result on `sender` when done (success or error, or if user cancels UAC).
     pub fn spawn_elevated_apply_registry(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
+        let exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
         std::thread::spawn(move || {
             let status = runas::Command::new(&exe)
                 .arg("--elevated-apply-registry")
@@ -351,8 +395,8 @@ mod windows {
 
     /// Spawn a thread that requests UAC and runs the hosts file fix in an elevated process.
     pub fn spawn_elevated_apply_hosts(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
+        let exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("spectre.exe"));
         std::thread::spawn(move || {
             let status = runas::Command::new(&exe)
                 .arg("--elevated-apply-hosts")
@@ -387,7 +431,9 @@ mod windows {
         let _ = sender.send(Ok(true));
     }
     pub fn spawn_elevated_install_directplay(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let _ = sender.send(Err("UAC elevation is only supported on Windows.".to_string()));
+        let _ = sender.send(Err(
+            "UAC elevation is only supported on Windows.".to_string()
+        ));
     }
     pub fn registry_fix_applied() -> bool {
         true
@@ -402,15 +448,20 @@ mod windows {
         Err("Hosts file fix is only supported on Windows.".to_string())
     }
     pub fn spawn_elevated_apply_registry(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let _ = sender.send(Err("UAC elevation is only supported on Windows.".to_string()));
+        let _ = sender.send(Err(
+            "UAC elevation is only supported on Windows.".to_string()
+        ));
     }
     pub fn spawn_elevated_apply_hosts(sender: std::sync::mpsc::Sender<Result<(), String>>) {
-        let _ = sender.send(Err("UAC elevation is only supported on Windows.".to_string()));
+        let _ = sender.send(Err(
+            "UAC elevation is only supported on Windows.".to_string()
+        ));
     }
 }
 
 pub use windows::{
     apply_gamepy_hosts, apply_registry_fix, enable_directplay, gamepy_hosts_applied,
     registry_fix_applied, run_check_directplay_and_write_result, spawn_elevated_apply_hosts,
-    spawn_elevated_apply_registry, spawn_elevated_check_directplay, spawn_elevated_install_directplay,
+    spawn_elevated_apply_registry, spawn_elevated_check_directplay,
+    spawn_elevated_install_directplay,
 };

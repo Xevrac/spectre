@@ -2,7 +2,8 @@ use super::Module;
 use crate::config::Config;
 use crate::server_prereqs::{
     gamepy_hosts_applied, registry_fix_applied, spawn_elevated_apply_hosts,
-    spawn_elevated_apply_registry, spawn_elevated_check_directplay, spawn_elevated_install_directplay,
+    spawn_elevated_apply_registry, spawn_elevated_check_directplay,
+    spawn_elevated_install_directplay,
 };
 use eframe::egui;
 use egui::TextureHandle;
@@ -61,10 +62,8 @@ impl ServerLauncher {
             );
             resvg::render(&rtree, transform, &mut pixmap.as_mut());
             let rgba = pixmap.data();
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                [size as usize, size as usize],
-                rgba,
-            );
+            let color_image =
+                egui::ColorImage::from_rgba_unmultiplied([size as usize, size as usize], rgba);
             Some(ctx.load_texture(format!("icon_{}", name), color_image, Default::default()))
         }
         let size = 16.0;
@@ -77,7 +76,10 @@ impl ServerLauncher {
 impl Default for ServerLauncher {
     fn default() -> Self {
         if let Err(e) = fs::create_dir_all(CONFIGS_DIR) {
-            println!("[Spectre.dbg] Could not create configs dir {}: {}", CONFIGS_DIR, e);
+            println!(
+                "[Spectre.dbg] Could not create configs dir {}: {}",
+                CONFIGS_DIR, e
+            );
         }
         let app_config = Config::load();
         let config_path = format!("{}/{}", CONFIGS_DIR, CONFIG_FILENAME);
@@ -99,7 +101,9 @@ impl Default for ServerLauncher {
         let show_first_time_wizard = !app_config.server_utility_wizard_completed;
         let directplay_from_config = app_config.directplay_detected;
         let directplay_detection_result = if directplay_from_config {
-            println!("[Spectre.dbg] DirectPlay: loaded from config (previously detected as enabled)");
+            println!(
+                "[Spectre.dbg] DirectPlay: loaded from config (previously detected as enabled)"
+            );
             Some(true)
         } else {
             None
@@ -165,7 +169,9 @@ impl ServerLauncher {
         let center_x = screen.center().x - WIZARD_WIDTH / 2.0;
         let center_y = screen.center().y - WIZARD_HEIGHT / 2.0;
 
-        let step = self.first_time_wizard_step.min(WIZARD_STEPS.saturating_sub(1));
+        let step = self
+            .first_time_wizard_step
+            .min(WIZARD_STEPS.saturating_sub(1));
 
         const PREREQ_CACHE_TTL_SECS: u64 = 2;
         let (registry_ok_cached, hosts_ok_cached) = if step == 0 {
@@ -493,7 +499,9 @@ impl ServerLauncher {
             });
 
         if apply_registry_clicked {
-            println!("[Spectre.dbg] Prereqs: user clicked Apply network fix, spawning elevated process");
+            println!(
+                "[Spectre.dbg] Prereqs: user clicked Apply network fix, spawning elevated process"
+            );
             self.registry_fix_error = None;
             self.prereq_cache = None;
             self.prereq_cache_time = None;
@@ -502,7 +510,9 @@ impl ServerLauncher {
             self.registry_elevate_rx = Some(rx);
         }
         if apply_hosts_clicked {
-            println!("[Spectre.dbg] Prereqs: user clicked Add GameSpy hosts, spawning elevated process");
+            println!(
+                "[Spectre.dbg] Prereqs: user clicked Add GameSpy hosts, spawning elevated process"
+            );
             self.hosts_fix_error = None;
             self.prereq_cache = None;
             self.prereq_cache_time = None;

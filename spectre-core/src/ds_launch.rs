@@ -9,12 +9,18 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     let mut lines = Vec::new();
     let add = |lines: &mut Vec<String>, s: String| lines.push(s);
 
-    add(&mut lines, format!("sessionname \"{}\"", config.session_name));
+    add(
+        &mut lines,
+        format!("sessionname \"{}\"", config.session_name),
+    );
     add(&mut lines, format!("style {}", config.style.to_lowercase()));
     for map in &config.maps {
         add(&mut lines, format!("mapname {}", map));
     }
-    add(&mut lines, format!("domain {}", config.domain.to_lowercase()));
+    add(
+        &mut lines,
+        format!("domain {}", config.domain.to_lowercase()),
+    );
     add(&mut lines, "dedicated 1".to_string());
     if config.domain.to_lowercase() != "local" {
         add(&mut lines, format!("port {}", server.port));
@@ -49,8 +55,14 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     } else {
         add(&mut lines, "3rdpersonview 0".to_string());
     }
-    add(&mut lines, format!("spawnprotection {}", config.spawn_protection));
-    add(&mut lines, format!("inversedamage {}", config.inverse_damage));
+    add(
+        &mut lines,
+        format!("spawnprotection {}", config.spawn_protection),
+    );
+    add(
+        &mut lines,
+        format!("inversedamage {}", config.inverse_damage),
+    );
     if config.falling_dmg {
         add(&mut lines, "fallingdmg 1".to_string());
     } else {
@@ -58,7 +70,10 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     }
     add(&mut lines, format!("maxfreq {}", config.max_freq));
     add(&mut lines, format!("maxping {}", config.max_ping));
-    add(&mut lines, format!("maxinactivity {}", config.max_inactivity));
+    add(
+        &mut lines,
+        format!("maxinactivity {}", config.max_inactivity),
+    );
     if config.allow_vehicles {
         add(&mut lines, "allowvehicles 1".to_string());
     } else {
@@ -114,7 +129,11 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
 }
 
 /// Write script lines to a file next to the DS exe.
-pub fn write_script_to_ds_dir(script: &[String], ds_exe_path: &Path, commands_basename: &str) -> Result<std::path::PathBuf, String> {
+pub fn write_script_to_ds_dir(
+    script: &[String],
+    ds_exe_path: &Path,
+    commands_basename: &str,
+) -> Result<std::path::PathBuf, String> {
     let parent = ds_exe_path
         .parent()
         .ok_or_else(|| "DS exe path has no parent directory".to_string())?;
@@ -166,7 +185,12 @@ fn get_current_config(server: &Server) -> Result<&ServerConfig, String> {
         .configs
         .iter()
         .find(|c| c.name == server.current_config)
-        .ok_or_else(|| format!("Config '{}' not found for server '{}'", server.current_config, server.name))
+        .ok_or_else(|| {
+            format!(
+                "Config '{}' not found for server '{}'",
+                server.current_config, server.name
+            )
+        })
 }
 
 /// Deploy config next to DS exe and start the DS process with -cmd -exec (working dir = exe dir).
@@ -188,7 +212,11 @@ pub fn start_ds(server: &Server) -> Result<u32, String> {
         format!("spectre_ds_{}.txt", name_part)
     };
     let written = write_script_to_ds_dir(&script, path, &commands_basename)?;
-    println!("[Server] Wrote {} ({} lines)", written.display(), script.len());
+    println!(
+        "[Server] Wrote {} ({} lines)",
+        written.display(),
+        script.len()
+    );
 
     let parent = path
         .parent()
