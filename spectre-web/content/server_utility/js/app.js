@@ -231,7 +231,7 @@
       const el = document.getElementById(id);
       return el ? el.checked : false;
     };
-    if (s) s.mpmaplist_path = (get('mpmaplist-path') || '').trim();
+    if (s) s.mpmaplist_path = trimPathQuotes(get('mpmaplist-path') || '');
     const name = get('profile-name').trim();
     if (name) c.name = name;
     c.session_name = get('session-name');
@@ -514,7 +514,6 @@
   let lastStatus = null;
   let lastStatusText = null;
   let lastPlayersText = null;
-  let lastStopAllDisplay = null;
   function requestRender() {
     if (renderRequested) return;
     renderRequested = true;
@@ -556,14 +555,6 @@
         lastRunCount = runCount;
         startAllBtn.textContent = runCount > 0 ? 'Stop All Servers' : 'Start All Servers';
         startAllBtn.className = runCount > 0 ? 'btn btn-sm btn-stop' : 'btn btn-sm';
-      }
-    }
-    var stopAllBtn = document.getElementById('stop-all-servers');
-    if (stopAllBtn) {
-      var stopAllDisplay = runCount > 1 ? '' : 'none';
-      if (lastStopAllDisplay !== stopAllDisplay) {
-        lastStopAllDisplay = stopAllDisplay;
-        stopAllBtn.style.display = stopAllDisplay;
       }
     }
     var statusDot = document.getElementById('server-status-dot');
@@ -701,6 +692,16 @@
       render();
     }
   });
+  document.getElementById('profile-select')?.addEventListener('click', function () {
+    const s = getSelectedServer();
+    const c = getSelectedConfig();
+    if (s && c) {
+      s.current_config = c.name;
+      setUnsaved(true);
+      render();
+      showMessage('Profile selected');
+    }
+  });
 
   document.getElementById('server-add')?.addEventListener('click', function () {
     bindConfigToForm();
@@ -744,8 +745,7 @@
   });
 
   function getEffectiveHd2Dir(server) {
-    var exePath = server.use_sabre_squadron ? (server.hd2ds_sabresquadron_path || '') : (server.hd2ds_path || '');
-    exePath = (exePath || '').trim();
+    var exePath = trimPathQuotes(server.use_sabre_squadron ? (server.hd2ds_sabresquadron_path || '') : (server.hd2ds_path || ''));
     if (!exePath) return '';
     var last = Math.max(exePath.lastIndexOf('\\'), exePath.lastIndexOf('/'));
     if (last <= 0) return '';
@@ -753,14 +753,22 @@
     return dir;
   }
 
+  function trimPathQuotes(str) {
+    var p = (str || '').trim();
+    if (p.length >= 2 && p.charAt(0) === '"' && p.charAt(p.length - 1) === '"') {
+      return p.slice(1, -1).trim();
+    }
+    return p;
+  }
+
   function getPathFileName(path) {
-    var p = (path || '').trim().replace(/\\/g, '/');
+    var p = trimPathQuotes(path || '').replace(/\\/g, '/');
     var last = p.lastIndexOf('/');
     return (last < 0 ? p : p.slice(last + 1)).toLowerCase();
   }
 
   function validateHd2dsPath(path) {
-    var p = (path || '').trim();
+    var p = trimPathQuotes(path);
     if (!p) return { valid: true };
     var name = getPathFileName(p);
     if (name !== 'hd2ds.exe') return { valid: false, msg: 'HD2DS.exe location must point to a file named HD2DS.exe' };
@@ -768,7 +776,7 @@
   }
 
   function validateSabrePath(path) {
-    var p = (path || '').trim();
+    var p = trimPathQuotes(path);
     if (!p) return { valid: true };
     var name = getPathFileName(p);
     if (name !== 'hd2ds_sabresquadron.exe') return { valid: false, msg: 'HD2DS_SabreSquadron.exe location must point to a file named HD2DS_SabreSquadron.exe' };
@@ -778,8 +786,8 @@
   function getEditServerValidationErrors() {
     var hd2dsEl = document.getElementById('edit-server-hd2ds-path');
     var sabreEl = document.getElementById('edit-server-sabre-path');
-    var h = hd2dsEl ? (hd2dsEl.value || '').trim() : '';
-    var s = sabreEl ? (sabreEl.value || '').trim() : '';
+    var h = hd2dsEl ? trimPathQuotes(hd2dsEl.value) : '';
+    var s = sabreEl ? trimPathQuotes(sabreEl.value) : '';
     var errs = [];
     var r1 = validateHd2dsPath(h);
     if (!r1.valid) errs.push(r1.msg);
@@ -816,8 +824,8 @@
     if (portEl && dialog) {
       if (nameEl) nameEl.value = s.name != null ? s.name : '';
       portEl.value = s.port || 22000;
-      if (hd2dsEl) hd2dsEl.value = s.hd2ds_path != null ? s.hd2ds_path : '';
-      if (sabreEl) sabreEl.value = s.hd2ds_sabresquadron_path != null ? s.hd2ds_sabresquadron_path : '';
+      if (hd2dsEl) hd2dsEl.value = s.hd2ds_path != null ? trimPathQuotes(s.hd2ds_path) : '';
+      if (sabreEl) sabreEl.value = s.hd2ds_sabresquadron_path != null ? trimPathQuotes(s.hd2ds_sabresquadron_path) : '';
       var pairs = getDuplicateHd2Pairs();
       var msg = '';
       var myDir = getEffectiveHd2Dir(s);
@@ -890,8 +898,8 @@
       }
     }
     s.port = port;
-    s.hd2ds_path = hd2dsEl ? (hd2dsEl.value || '').trim() : (s.hd2ds_path || '');
-    s.hd2ds_sabresquadron_path = sabreEl ? (sabreEl.value || '').trim() : (s.hd2ds_sabresquadron_path || '');
+    s.hd2ds_path = hd2dsEl ? trimPathQuotes(hd2dsEl.value) : (s.hd2ds_path || '');
+    s.hd2ds_sabresquadron_path = sabreEl ? trimPathQuotes(sabreEl.value) : (s.hd2ds_sabresquadron_path || '');
     setUnsaved(true);
     dialog.close();
     render();
@@ -901,19 +909,21 @@
     document.getElementById('edit-server-dialog')?.close();
   });
 
-  document.getElementById('edit-server-browse-hd2ds')?.addEventListener('click', function () {
-    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      try {
-        window.ipc.postMessage(JSON.stringify({ action: 'browse_hd2_dir', browse_which: 'hd2ds', servers: state.servers }));
-      } catch (err) { ipcLog('Browse HD2DS folder error', err); }
-    }
+  document.getElementById('edit-server-clear-hd2ds')?.addEventListener('click', function () {
+    var el = document.getElementById('edit-server-hd2ds-path');
+    if (el) el.value = '';
+    var s = getSelectedServer();
+    if (s) s.hd2ds_path = '';
+    setUnsaved(true);
+    requestRender();
   });
-  document.getElementById('edit-server-browse-sabre')?.addEventListener('click', function () {
-    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      try {
-        window.ipc.postMessage(JSON.stringify({ action: 'browse_hd2_dir', browse_which: 'sabre', servers: state.servers }));
-      } catch (err) { ipcLog('Browse Sabre folder error', err); }
-    }
+  document.getElementById('edit-server-clear-sabre')?.addEventListener('click', function () {
+    var el = document.getElementById('edit-server-sabre-path');
+    if (el) el.value = '';
+    var s = getSelectedServer();
+    if (s) s.hd2ds_sabresquadron_path = '';
+    setUnsaved(true);
+    requestRender();
   });
 
   document.getElementById('save-config')?.addEventListener('click', function () {
@@ -950,15 +960,15 @@
         }));
         ipcLog('Stop Server', state.selectedServerIndex);
       } else {
-        var path = s.use_sabre_squadron ? (s.hd2ds_sabresquadron_path || '') : (s.hd2ds_path || '');
-        if (!path.trim()) {
+        var path = trimPathQuotes(s.use_sabre_squadron ? (s.hd2ds_sabresquadron_path || '') : (s.hd2ds_path || ''));
+        if (!path) {
           state.serverStarting = false;
           state.serverError = false;
           showMessage('Failed to start - missing executable path!', true);
           render();
           return;
         }
-        var mpmaplist = (s.mpmaplist_path || '').trim();
+        var mpmaplist = trimPathQuotes(s.mpmaplist_path || '');
         if (!mpmaplist) {
           state.serverStarting = false;
           state.serverError = false;
@@ -999,16 +1009,6 @@
         ipcLog('Start All Servers', state.servers.length);
       }
     } catch (err) { ipcLog('Start/Stop All postMessage error', err); }
-  });
-
-  document.getElementById('stop-all-servers')?.addEventListener('click', function () {
-    bindConfigToForm();
-    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      try {
-        window.ipc.postMessage(JSON.stringify({ action: 'stop_all', servers: state.servers }));
-        ipcLog('Stop All Servers');
-      } catch (err) { ipcLog('Stop All postMessage error', err); }
-    }
   });
 
   document.getElementById('map-add')?.addEventListener('click', function () {
@@ -1421,16 +1421,14 @@
     openLogFile();
   });
 
-  document.getElementById('mpmaplist-browse')?.addEventListener('click', function () {
+  document.getElementById('mpmaplist-clear')?.addEventListener('click', function () {
     bindConfigToForm();
-    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      try {
-        var payload = JSON.stringify({ action: 'browse_mpmaplist', servers: state.servers });
-        window.ipc.postMessage(payload);
-      } catch (err) {
-        ipcLog('Browse mpmaplist postMessage error', err);
-      }
-    }
+    var el = document.getElementById('mpmaplist-path');
+    if (el) el.value = '';
+    var s = getSelectedServer();
+    if (s) s.mpmaplist_path = '';
+    setUnsaved(true);
+    requestRender();
   });
   render();
   if (state.activeTab === 'logs') requestLogContent();

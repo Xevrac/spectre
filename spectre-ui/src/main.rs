@@ -41,9 +41,12 @@ struct IpcSaveMessage {
     browse_which: Option<String>,
 }
 
+#[cfg(windows)]
+mod server_utility_http;
+
 /// Path to hd2_server_config.json next to the executable.
 #[cfg(windows)]
-fn server_utility_config_path() -> std::path::PathBuf {
+pub(crate) fn server_utility_config_path() -> std::path::PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(std::path::PathBuf::from))
@@ -55,7 +58,7 @@ fn server_utility_config_path() -> std::path::PathBuf {
 
 /// Path to the app log file in content/server_utility. Prefer canonical exe path so it is absolute.
 #[cfg(windows)]
-fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf {
     let path = std::env::current_exe()
         .ok()
         .and_then(|p| {
@@ -76,7 +79,7 @@ fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf {
 }
 
 #[cfg(windows)]
-fn ensure_log_file_exists(path: &std::path::Path) {
+pub(crate) fn ensure_log_file_exists(path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -124,7 +127,7 @@ fn write_app_log(state: &Arc<Mutex<(std::path::PathBuf, u32)>>, line: &str) {
 }
 
 #[cfg(windows)]
-fn browse_mpmaplist_with_validation() -> String {
+pub(crate) fn browse_mpmaplist_with_validation() -> String {
     use std::io::BufRead;
     let path = match rfd::FileDialog::new()
         .add_filter("Text (mpmaplist)", &["txt"])
@@ -165,7 +168,7 @@ fn browse_mpmaplist_with_validation() -> String {
 
 /// Open file dialog to select the exe. which: "hd2ds" or "sabre".
 #[cfg(windows)]
-fn browse_hd2_exe(which: &str) -> String {
+pub(crate) fn browse_hd2_exe(which: &str) -> String {
     let file = match rfd::FileDialog::new()
         .add_filter("Executable", &["exe"])
         .pick_file()
@@ -183,7 +186,7 @@ fn browse_hd2_exe(which: &str) -> String {
 }
 
 #[cfg(windows)]
-fn ensure_server_utility_has_defaults(data: &mut spectre_core::server::ServerLauncherData) {
+pub(crate) fn ensure_server_utility_has_defaults(data: &mut spectre_core::server::ServerLauncherData) {
     use spectre_core::server::{Server, ServerConfig};
     if data.servers.is_empty() {
         let mut server = Server::default();
@@ -408,7 +411,7 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn kill_process_by_pid(pid: u32) -> bool {
+pub(crate) fn kill_process_by_pid(pid: u32) -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     if pid == 0 {
@@ -922,6 +925,12 @@ struct SpectreApp {
     refresh_icon: Option<TextureHandle>,
     #[cfg(debug_assertions)]
     console_icon: Option<TextureHandle>,
+    #[cfg(windows)]
+    show_server_utility_dashboard: bool,
+    #[cfg(windows)]
+    server_utility_http: Option<server_utility_http::ServerHandle>,
+    #[cfg(windows)]
+    server_utility_port_input: String,
 }
 
 impl SpectreApp {
@@ -1003,10 +1012,16 @@ impl SpectreApp {
             #[cfg(windows)]
             tray_button_icon,
             refresh_icon,
-            #[cfg(debug_assertions)]
-            console_icon,
-        }
+        #[cfg(debug_assertions)]
+        console_icon,
+        #[cfg(windows)]
+        show_server_utility_dashboard: false,
+        #[cfg(windows)]
+        server_utility_http: None,
+        #[cfg(windows)]
+        server_utility_port_input: String::new(),
     }
+}
 
     fn apply_theme(ctx: &egui::Context) {
         ctx.set_visuals(egui::Visuals::dark());
@@ -1391,6 +1406,176 @@ impl SpectreApp {
         });
     }
 
+    #[cfg(windows)]
+    fn show_server_utility_dashboard_ui(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
+        let running = self.server_utility_http.is_some();
+        let current_port = self.server_utility_http.as_ref().map(|h| h.port);
+        let panel_fill = egui::Color32::from_gray(45);
+        let panel_rounding = egui::Rounding::same(4);
+        let left_margin = egui::Margin { left: 6, ..Default::default() };
+
+        egui::Frame::none()
+            .inner_margin(left_margin)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.heading("Server Utility — Web server");
+                ui.add_space(8.0);
+
+                ui.set_min_width(ui.available_width());
+                egui::Frame::none()
+                    .fill(panel_fill)
+                    .rounding(panel_rounding)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Status:");
+                            if running {
+                                ui.label(egui::RichText::new("Running").color(egui::Color32::GREEN));
+                                ui.label(format!("Port: {}", current_port.unwrap_or(0)));
+                            } else {
+                                ui.label(egui::RichText::new("Stopped").color(ui.visuals().weak_text_color()));
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Port:");
+                            if !running {
+                                if self.server_utility_port_input.is_empty() {
+                                    self.server_utility_port_input =
+                                        self.config.server_utility_http_port.to_string();
+                                }
+                                let port_edit_id = egui::Id::new("server_utility_port");
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.server_utility_port_input)
+                                        .desired_width(72.0)
+                                        .id(port_edit_id),
+                                );
+                                let save_clicked = ui.button("Save").clicked();
+                                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    let parsed = self.server_utility_port_input.trim().parse::<u16>().ok();
+                                    if let Some(p) = parsed {
+                                        let p = p.clamp(1024, 65535);
+                                        self.config.server_utility_http_port = p;
+                                        self.config.save();
+                                        self.server_utility_port_input = p.to_string();
+                                    }
+                                }
+                                if save_clicked {
+                                    let parsed = self.server_utility_port_input.trim().parse::<u16>().ok();
+                                    if let Some(p) = parsed {
+                                        let p = p.clamp(1024, 65535);
+                                        self.config.server_utility_http_port = p;
+                                        self.config.save();
+                                        self.server_utility_port_input = p.to_string();
+                                    }
+                                }
+                            } else {
+                                ui.label(current_port.unwrap_or(0).to_string());
+                            }
+                        });
+
+                        if running {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(format!(
+                                    "Access at: http://localhost:{}",
+                                    current_port.unwrap_or(0)
+                                )).small());
+                            });
+                        }
+
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if running {
+                                if ui.button("Stop server").clicked() {
+                                    if let Some(mut handle) = self.server_utility_http.take() {
+                                        if let Some(jh) = handle.stop() {
+                                            std::thread::spawn(move || { let _ = jh.join(); });
+                                        }
+                                    }
+                                }
+                            } else {
+                                if ui.button("Start server").clicked() {
+                                    let config_path = server_utility_config_path();
+                                    let log_file_path = config_path
+                                        .parent()
+                                        .map(|p| p.join("http_server.log"))
+                                        .unwrap_or_else(|| std::path::PathBuf::from("content/server_utility/http_server.log"));
+                                    let log_max_size_bytes =
+                                        (self.config.server_utility_log_max_mb * 1024.0 * 1024.0) as u64;
+                                    let state = server_utility_http::ServerUtilityHttpState {
+                                        config_path: config_path.clone(),
+                                        server_pids: self.server_pids.clone(),
+                                        log_state: self.log_state.clone(),
+                                        helper_kicked: Some(self.helper_kicked.clone()),
+                                        helper_last_slots: Some(self.helper_last_slots.clone()),
+                                        request_log: Arc::new(Mutex::new(Vec::new())),
+                                        log_file_path: Some(log_file_path),
+                                        log_max_size_bytes,
+                                    };
+                                    match server_utility_http::start(self.config.server_utility_http_port, state) {
+                                        Ok(handle) => {
+                                            self.server_utility_http = Some(handle);
+                                            ensure_log_file_exists(&app_log_path(&config_path));
+                                            let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
+                                                .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
+                                            ensure_server_utility_has_defaults(&mut data);
+                                            let rotation_days = data.server_manager.log_rotation_days;
+                                            self.log_state = Some(Arc::new(Mutex::new((
+                                                app_log_path(&config_path),
+                                                rotation_days,
+                                            ))));
+                                        }
+                                        Err(e) => {
+                                            println!("[Server Utility HTTP] Start failed: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(ref h) = self.server_utility_http {
+                                let url = format!("http://localhost:{}", h.port);
+                                if ui.button("Open in browser").clicked() {
+                                    let _ = std::process::Command::new("cmd")
+                                        .args(["/c", "start", "", &url])
+                                        .spawn();
+                                }
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("Let's Encrypt (HTTPS)").small().weak());
+                        ui.label("This feature is coming soon in a future release. Stay tuned!");
+                    });
+
+                ui.add_space(8.0);
+
+                ui.set_min_width(ui.available_width());
+                egui::Frame::none()
+                    .fill(panel_fill)
+                    .rounding(panel_rounding)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label("Log");
+                        let log_lines = self
+                            .server_utility_http
+                            .as_ref()
+                            .map(|h| h.get_log_lines())
+                            .unwrap_or_default();
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                if log_lines.is_empty() {
+                                    ui.weak("No requests yet.");
+                                } else {
+                                    for line in log_lines {
+                                        ui.monospace(line);
+                                    }
+                                }
+                            });
+                    });
+            });
+    }
+
     fn show_landing_page(&mut self, ui: &mut egui::Ui) {
         let available_width = ui.available_width();
         let side_padding = 20.0;
@@ -1666,8 +1851,7 @@ impl SpectreApp {
                                                 } else {
                                                     #[cfg(windows)]
                                                     {
-                                                        self.pending_webview_card =
-                                                            Some("server_utility".to_string());
+                                                        self.show_server_utility_dashboard = true;
                                                     }
                                                     #[cfg(not(windows))]
                                                     {
@@ -2078,7 +2262,7 @@ impl SpectreApp {
             self.current_module = None;
             #[cfg(windows)]
             {
-                self.pending_webview_card = Some("server_utility".to_string());
+                self.show_server_utility_dashboard = true;
             }
         }
 
@@ -3055,6 +3239,16 @@ impl SpectreApp {
                         self.config.save();
                     }
 
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Server Utility HTTP log max size (MB):");
+                        let mut mb = self.config.server_utility_log_max_mb;
+                        if ui.add(egui::DragValue::new(&mut mb).range(0.5..=100.0).speed(0.5)).changed() {
+                            self.config.server_utility_log_max_mb = mb;
+                            self.config.save();
+                        }
+                    });
+
                     ui.add_space(15.0);
                     ui.separator();
 
@@ -3199,6 +3393,15 @@ impl SpectreApp {
                     return;
                 }
                 #[cfg(windows)]
+                if self.show_server_utility_dashboard {
+                    self.show_action_bar(ui, true);
+                    let content_rect = ui.available_rect_before_wrap();
+                    ui.allocate_ui_at_rect(content_rect, |ui| {
+                        self.show_server_utility_dashboard_ui(ctx, ui);
+                    });
+                    return;
+                }
+                #[cfg(windows)]
                 if self.webview.is_some() {
                     let any_modal =
                         self.show_options || self.show_about || self.card_launch_error.is_some();
@@ -3230,8 +3433,11 @@ impl SpectreApp {
         if ctx.data_mut(|d| d.get_temp::<()>(egui::Id::new("spectre_go_home")).is_some()) {
             ctx.data_mut(|d| d.remove::<()>(egui::Id::new("spectre_go_home")));
             #[cfg(windows)]
-            if self.webview.is_some() {
-                self.webview = None;
+            {
+                if self.webview.is_some() {
+                    self.webview = None;
+                }
+                self.show_server_utility_dashboard = false;
             }
             self.current_module = None;
             self.config = Config::load();

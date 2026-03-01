@@ -37,6 +37,18 @@ pub struct Config {
     pub machine_id: Option<String>,
     #[serde(default)]
     pub server_utility_wizard_completed: bool,
+    #[serde(default = "default_server_utility_http_port")]
+    pub server_utility_http_port: u16,
+    #[serde(default = "default_server_utility_log_max_mb")]
+    pub server_utility_log_max_mb: f32,
+}
+
+fn default_server_utility_http_port() -> u16 {
+    8765
+}
+
+fn default_server_utility_log_max_mb() -> f32 {
+    10.0
 }
 
 fn default_fullscreen_dialogs() -> bool {
@@ -50,6 +62,8 @@ impl Default for Config {
             directplay_detected: false,
             machine_id: None,
             server_utility_wizard_completed: false,
+            server_utility_http_port: 8765,
+            server_utility_log_max_mb: 10.0,
         }
     }
 }

@@ -144,13 +144,23 @@ pub fn write_script_to_ds_dir(
     Ok(target)
 }
 
+fn trim_path_quotes(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        s[1..s.len() - 1].trim().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// DS exe path (HD2DS vs Sabre Squadron) from this server's per-server paths.
-fn get_ds_exe_path(server: &Server) -> Result<&str, String> {
-    let path = if server.use_sabre_squadron {
+fn get_ds_exe_path(server: &Server) -> Result<String, String> {
+    let raw = if server.use_sabre_squadron {
         server.hd2ds_sabresquadron_path.as_str()
     } else {
         server.hd2ds_path.as_str()
     };
+    let path = trim_path_quotes(raw);
     if path.is_empty() {
         return Err(if server.use_sabre_squadron {
             "HD2DS Sabre Squadron path is not set for this server".to_string()
@@ -198,7 +208,7 @@ fn get_current_config(server: &Server) -> Result<&ServerConfig, String> {
 /// Returns the new process ID on success (process is detached).
 pub fn start_ds(server: &Server) -> Result<u32, String> {
     let exe_path = get_ds_exe_path(server)?;
-    let path = Path::new(exe_path);
+    let path = Path::new(&exe_path);
     if !path.exists() {
         return Err(format!("DS exe not found: {}", exe_path));
     }

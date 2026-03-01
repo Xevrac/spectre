@@ -52,10 +52,23 @@ body {
   gap: 12px;
 }
 
+.toolbar-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .toolbar-title {
   margin: 0;
   font-size: 1.15rem;
   font-weight: 600;
+}
+
+.toolbar-subtitle {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .toolbar-save-row {
@@ -107,7 +120,7 @@ body {
 /* Banner overlays content so it never pushes or clips the main area */
 .message-banner {
   position: fixed;
-  top: 49px;
+  top: 59px;
   left: 0;
   right: 0;
   z-index: 20;
@@ -261,6 +274,14 @@ body {
 .sidebar-spacer {
   flex: 1;
   min-height: 12px;
+}
+
+.sidebar-version {
+  margin-top: 2px;
+  padding-top: 2px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* Profile list */

@@ -8,7 +8,10 @@
 </head>
 <body>
   <header class="toolbar">
-    <h1 class="toolbar-title">Server Utility</h1>
+    <div class="toolbar-heading">
+      <h1 class="toolbar-title">Server Utility</h1>
+      <p class="toolbar-subtitle">Powered by Spectre</p>
+    </div>
     <span class="toolbar-save-row">
       <span class="unsaved-indicator" id="unsaved-indicator" aria-label="Unsaved changes" title="Unsaved changes">
       <span class="unsaved-dot"></span>
@@ -47,6 +50,7 @@
           <button type="button" class="btn btn-sm" id="profile-new">New</button>
           <button type="button" class="btn btn-sm" id="profile-delete">Delete</button>
           <button type="button" class="btn btn-sm" id="profile-duplicate">Duplicate</button>
+          <button type="button" class="btn btn-sm" id="profile-select">Select</button>
         </div>
       </section>
 
@@ -61,7 +65,7 @@
       <div class="sidebar-spacer"></div>
       <button type="button" class="btn btn-start" id="start-server">Start Server</button>
       <button type="button" class="btn btn-sm" id="start-all-servers">Start All Servers</button>
-      <button type="button" class="btn btn-sm btn-stop" id="stop-all-servers" style="display: none;">Stop All Servers</button>
+      <div class="sidebar-version">Spectre {{SPECTRE_VERSION}}</div>
     </aside>
 
     <main class="content">
@@ -121,13 +125,12 @@
               <label for="mpmaplist-path">Maplist path (mpmaplist.txt) — per profile</label>
               <div class="input-with-icon">
                 <input type="text" class="input" id="mpmaplist-path" placeholder="Path to mpmaplist.txt">
-                <button type="button" class="btn btn-icon" id="mpmaplist-browse" title="Browse for mpmaplist.txt (must be .txt, first line must start with &lt;MAP_LIST&gt;)">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-                  <span class="btn-icon-label">Browse</span>
+                <button type="button" class="btn btn-icon" id="mpmaplist-clear" title="Clear maplist path">
+                  <span class="btn-icon-label">Clear</span>
                 </button>
               </div>
             </div>
-            <p class="map-hint">Maps come from this server's <code>mpmaplist.txt</code>. Set the path (Browse or type) and save to persist; maps load when you set the path. Add maps from the available list into the rotation.</p>
+            <p class="map-hint">Maps come from this server's <code>mpmaplist.txt</code>. Enter the path to mpmaplist.txt and save to persist; maps load when you set the path. Add maps from the available list into the rotation.</p>
             <div class="map-lists-row">
               <div class="map-list-box">
                 <label class="map-list-label">Available</label>
@@ -420,9 +423,8 @@
         <label for="edit-server-hd2ds-path">HD2DS.exe location</label>
         <div class="input-with-icon">
           <input type="text" class="input" id="edit-server-hd2ds-path" placeholder="Path to HD2DS.exe" aria-label="HD2DS.exe location">
-          <button type="button" class="btn btn-icon" id="edit-server-browse-hd2ds" title="Select HD2DS.exe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-            <span class="btn-icon-label">Browse</span>
+          <button type="button" class="btn btn-icon" id="edit-server-clear-hd2ds" title="Clear HD2DS.exe path">
+            <span class="btn-icon-label">Clear</span>
           </button>
         </div>
       </div>
@@ -430,9 +432,8 @@
         <label for="edit-server-sabre-path">HD2DS_SabreSquadron.exe location</label>
         <div class="input-with-icon">
           <input type="text" class="input" id="edit-server-sabre-path" placeholder="Path to HD2DS_SabreSquadron.exe" aria-label="HD2DS_SabreSquadron.exe location">
-          <button type="button" class="btn btn-icon" id="edit-server-browse-sabre" title="Select HD2DS_SabreSquadron.exe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-            <span class="btn-icon-label">Browse</span>
+          <button type="button" class="btn btn-icon" id="edit-server-clear-sabre" title="Clear HD2DS_SabreSquadron.exe path">
+            <span class="btn-icon-label">Clear</span>
           </button>
         </div>
       </div>
