@@ -44,6 +44,8 @@ pub struct Config {
     pub server_utility_log_max_mb: f32,
     #[serde(default)]
     pub server_pids: HashMap<String, u32>,
+    #[serde(default)]
+    pub debug_mode: bool,
 }
 
 fn default_server_utility_http_port() -> u16 {
@@ -68,6 +70,7 @@ impl Default for Config {
             server_utility_http_port: 8765,
             server_utility_log_max_mb: 10.0,
             server_pids: HashMap::new(),
+            debug_mode: false,
         }
     }
 }

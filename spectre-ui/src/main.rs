@@ -526,6 +526,17 @@ fn is_webview2_runtime_installed() -> bool {
 }
 
 #[cfg(windows)]
+fn ensure_debug_console() {
+    use windows::Win32::System::Console::AllocConsole;
+    unsafe {
+        let _ = AllocConsole();
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_debug_console() {}
+
+#[cfg(windows)]
 fn show_messagebox(title: &str, message: &str) {
     #[cfg(not(debug_assertions))]
     {
@@ -978,6 +989,9 @@ impl SpectreApp {
 
         let config = Arc::new(Mutex::new(Config::load()));
         println!("[Spectre.dbg] Configuration loaded");
+        if config.lock().as_ref().map(|c| c.debug_mode).unwrap_or(false) {
+            ensure_debug_console();
+        }
         #[cfg(windows)]
         let initial_pids = load_persisted_pids(&config.lock().unwrap());
 
@@ -2275,10 +2289,11 @@ impl SpectreApp {
                 } else {
                     None
                 };
+                let debug_card = self.config.lock().map(|c| c.debug_mode).unwrap_or(false);
                 let html_result = spectre_web::embedded_card_html(
                     &card_name,
                     initial_json.as_deref(),
-                    cfg!(debug_assertions),
+                    cfg!(debug_assertions) || debug_card,
                 );
                 if let Ok(html) = html_result {
                     if let Some(ref frame) = frame_opt {
@@ -2324,16 +2339,19 @@ impl SpectreApp {
                         move |request: http::Request<String>| {
                             let body = request.body();
                             let t0 = Instant::now();
-                            let perf = std::env::var("SPECTRE_PERF").is_ok();
+                            let perf = shared_config.lock().map(|c| c.debug_mode).unwrap_or(false)
+                                || std::env::var("SPECTRE_PERF").is_ok();
                             if let Ok(ref msg) = serde_json::from_str::<IpcSaveMessage>(body) {
-                                if msg.action != "get_players" && msg.action != "repaint" {
+                                if perf && msg.action != "get_players" && msg.action != "repaint" {
                                     println!("[Service] {} body_len={}", msg.action, body.len());
                                     let _ = std::io::stdout().flush();
                                 }
                             }
                             match serde_json::from_str::<IpcSaveMessage>(body) {
                                 Ok(msg) if msg.action == "save" => {
-                                    println!("[Service] Save: {} servers", msg.servers.len());
+                                    if perf {
+                                        println!("[Service] Save: {} servers", msg.servers.len());
+                                    }
                                     let mut data = spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                                         .unwrap_or_else(|_| spectre_core::server::ServerLauncherData::default());
                                     data.servers = msg.servers;
@@ -2684,7 +2702,8 @@ impl SpectreApp {
                     || msg == "Saved OK"
                     || msg.starts_with("STATE:")
             }
-            let perf = std::env::var("SPECTRE_PERF").is_ok();
+            let perf = self.config.lock().map(|c| c.debug_mode).unwrap_or(false)
+                || std::env::var("SPECTRE_PERF").is_ok();
             let t_drain = Instant::now();
             let mut critical = Vec::new();
             let mut other = Vec::new();
@@ -3032,7 +3051,7 @@ impl SpectreApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                     println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
                 } else {
-                    const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
+                    const APP_WINDOW_SIZE: (f32, f32) = (1024.0, 768.0);
                     const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
                     let monitor_size = ctx.input(|i| i.viewport().monitor_size)
                         .or_else(|| Some(ctx.screen_rect().size()));
@@ -3116,7 +3135,7 @@ impl SpectreApp {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                                 println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
                             } else {
-                                const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
+                                const APP_WINDOW_SIZE: (f32, f32) = (1024.0, 768.0);
                                 const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
                                 let monitor_size = ctx.input(|i| i.viewport().monitor_size)
                                     .or_else(|| Some(ctx.screen_rect().size()));
@@ -3142,6 +3161,17 @@ impl SpectreApp {
                                 println!("[Spectre.dbg] Application restored to windowed mode ({}x{}, centered)", w, h);
                             }
                             c.save();
+                        }
+                    }
+
+                    ui.add_space(8.0);
+                    if let Ok(mut c) = self.config.lock() {
+                        if ui.checkbox(&mut c.debug_mode, "Debug mode").changed() {
+                            c.save();
+                            if c.debug_mode {
+                                ensure_debug_console();
+                                println!("[Spectre.dbg] Debug mode enabled (timing, extra logging)");
+                            }
                         }
                     }
 
