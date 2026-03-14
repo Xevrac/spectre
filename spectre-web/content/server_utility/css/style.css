@@ -179,6 +179,9 @@ body {
 
 .sidebar-section {
   flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .sidebar-notice {
@@ -267,13 +270,139 @@ body {
 
 .sidebar-actions {
   display: flex;
-  gap: 6px;
+  flex-wrap: nowrap;
+  justify-content: space-evenly;
   margin-top: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sidebar-actions .btn-icon-action {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+}
+
+.sidebar-actions .btn-icon-action:hover {
+  color: var(--text);
+  background: var(--bg-toolbar);
+  border-color: var(--border);
+}
+
+.sidebar-actions .btn-icon-action:focus-visible {
+  outline: 2px solid var(--focus-ring, #4a9eff);
+  outline-offset: 2px;
+}
+
+.sidebar-actions .btn-icon-action svg {
+  flex-shrink: 0;
+}
+
+/* Tooltip on hover (tippy-like) */
+.sidebar-actions .btn-icon-action[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.sidebar-actions .btn-icon-action[data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+#start-server[data-tooltip] {
+  position: relative;
+}
+#start-server[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 240px;
+  white-space: normal;
+  text-align: center;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+#start-server[data-tooltip]:hover::after {
+  opacity: 1;
 }
 
 .sidebar-spacer {
   flex: 1;
   min-height: 12px;
+}
+
+.sidebar-kofi {
+  margin-top: 6px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 700;
+  border-color: #90be6d;
+  color: var(--text);
+}
+.sidebar-kofi:hover {
+  border-color: #a8d08d;
+  color: var(--text);
+}
+.sidebar-kofi-icon {
+  flex-shrink: 0;
+}
+.sidebar-kofi[data-tooltip] {
+  position: relative;
+}
+.sidebar-kofi[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.sidebar-kofi[data-tooltip]:hover::after {
+  opacity: 1;
 }
 
 .sidebar-version {
@@ -881,15 +1010,58 @@ body {
   padding: 16px;
 }
 
-.log-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.log-content-wrap {
+.log-container {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--input-bg);
+  overflow: hidden;
+}
+.log-server-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px 0;
+  border-bottom: 1px solid var(--border);
+  min-height: 40px;
+}
+.log-server-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-bottom: -1px;
+  background: var(--bg-content);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.log-server-tab:hover {
+  background: var(--bg-toolbar);
+}
+.log-server-tab[aria-selected="true"] {
+  background: var(--input-bg);
+  border-bottom-color: var(--input-bg);
+  font-weight: 600;
+}
+.log-server-tabs .log-refresh-btn {
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-bottom: -1px;
+  background: var(--bg-content);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.log-server-tabs .log-refresh-btn:hover {
+  background: var(--bg-toolbar);
+}
+.log-content-wrap {
   max-height: 400px;
   overflow: auto;
   padding: 10px;

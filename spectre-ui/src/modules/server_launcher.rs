@@ -89,7 +89,7 @@ impl Default for ServerLauncher {
         if data.servers.is_empty() {
             let mut server = Server::default();
             server.name = "Server 1".to_string();
-            server.port = 22000;
+            server.port = 11001;
             let mut default_config = ServerConfig::default();
             default_config.name = "Default".to_string();
             default_config.session_name = "A Spectre Session".to_string();

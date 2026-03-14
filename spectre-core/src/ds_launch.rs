@@ -4,10 +4,15 @@ use crate::server::{Server, ServerConfig};
 use std::path::Path;
 use std::process::Command;
 
-/// Build HD2 DS console commands from server and current config. Order matches known working scripts.
+/// Build HD2 DS console commands from server and current config. Order matches known working scripts (domain after fallingdmg, dedicated 1 before server so the game keeps domain local).
 pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     let mut lines = Vec::new();
     let add = |lines: &mut Vec<String>, s: String| lines.push(s);
+
+    let domain = match config.domain.to_lowercase().as_str() {
+        "local" | "lan" => "local",
+        _ => "internet",
+    };
 
     add(
         &mut lines,
@@ -17,34 +22,30 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     for map in &config.maps {
         add(&mut lines, format!("mapname {}", map));
     }
-    add(
-        &mut lines,
-        format!("domain {}", config.domain.to_lowercase()),
-    );
-    add(&mut lines, "dedicated 1".to_string());
-    if config.domain.to_lowercase() != "local" {
-        add(&mut lines, format!("port {}", server.port));
-    }
-    add(&mut lines, format!("password \"{}\"", config.password));
-    if !config.admin_pass.is_empty() {
-        add(&mut lines, format!("adminpass \"{}\"", config.admin_pass));
-    }
     add(&mut lines, format!("maxclients {}", config.max_clients));
     add(&mut lines, format!("pointlimit {}", config.point_limit));
     add(&mut lines, format!("roundlimit {}", config.round_limit));
     add(&mut lines, format!("roundcount {}", config.round_count));
-    add(&mut lines, format!("warmup {}", config.warmup));
-    add(&mut lines, format!("respawntime {}", config.respawn_time));
     if config.allow_respawn {
         add(&mut lines, "allowrespawn 1".to_string());
     } else {
         add(&mut lines, "allowrespawn 0".to_string());
     }
+    add(&mut lines, format!("respawntime {}", config.respawn_time));
+    add(
+        &mut lines,
+        format!("spawnprotection {}", config.spawn_protection),
+    );
     if config.friendly_fire {
         add(&mut lines, "friendlyfire 1".to_string());
     } else {
         add(&mut lines, "friendlyfire 0".to_string());
     }
+    add(
+        &mut lines,
+        format!("inversedamage {}", config.inverse_damage),
+    );
+    add(&mut lines, format!("warmup {}", config.warmup));
     if config.auto_team_balance {
         add(&mut lines, "autoteambalance 1".to_string());
     } else {
@@ -55,29 +56,44 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     } else {
         add(&mut lines, "3rdpersonview 0".to_string());
     }
-    add(
-        &mut lines,
-        format!("spawnprotection {}", config.spawn_protection),
-    );
-    add(
-        &mut lines,
-        format!("inversedamage {}", config.inverse_damage),
-    );
     if config.falling_dmg {
         add(&mut lines, "fallingdmg 1".to_string());
     } else {
         add(&mut lines, "fallingdmg 0".to_string());
     }
-    add(&mut lines, format!("maxfreq {}", config.max_freq));
-    add(&mut lines, format!("maxping {}", config.max_ping));
-    add(
-        &mut lines,
-        format!("maxinactivity {}", config.max_inactivity),
-    );
+    add(&mut lines, format!("domain {}", domain));
+    if domain != "local" {
+        add(&mut lines, format!("port {}", server.port));
+        add(&mut lines, format!("password \"{}\"", config.password));
+        if !config.admin_pass.is_empty() {
+            add(&mut lines, format!("adminpass \"{}\"", config.admin_pass));
+        }
+    }
     if config.allow_vehicles {
         add(&mut lines, "allowvehicles 1".to_string());
     } else {
         add(&mut lines, "allowvehicles 0".to_string());
+    }
+    add(&mut lines, format!("maxping {}", config.max_ping));
+    add(&mut lines, format!("maxfreq {}", config.max_freq));
+    add(
+        &mut lines,
+        format!("maxinactivity {}", config.max_inactivity),
+    );
+    if config.voice_chat != 0 {
+        let voice = match config.voice_chat {
+            1 => "vr12",
+            2 => "sc03",
+            3 => "sc06",
+            4 => "truespeech",
+            5 => "gsm",
+            6 => "adpcm",
+            7 => "pcm",
+            _ => "none",
+        };
+        add(&mut lines, format!("voicechat {}", voice));
+    } else {
+        add(&mut lines, "voicechat none".to_string());
     }
     add(&mut lines, "autorestart 0".to_string());
     let d = config.difficulty.to_lowercase();
@@ -110,19 +126,7 @@ pub fn build_ds_script(server: &Server, config: &ServerConfig) -> Vec<String> {
     } else {
         add(&mut lines, "teamlives 0".to_string());
     }
-    if config.voice_chat != 0 {
-        let voice = match config.voice_chat {
-            1 => "vr12",
-            2 => "sc03",
-            3 => "sc06",
-            4 => "truespeech",
-            5 => "gsm",
-            6 => "adpcm",
-            7 => "pcm",
-            _ => "none",
-        };
-        add(&mut lines, format!("voicechat {}", voice));
-    }
+    add(&mut lines, "dedicated 1".to_string());
     add(&mut lines, "server".to_string());
 
     lines
@@ -250,7 +254,7 @@ mod tests {
     #[test]
     fn script_build_smoke() {
         let mut server = Server::default();
-        server.port = 22000;
+        server.port = 11001;
         let mut config = ServerConfig::default();
         config.session_name = "Test".to_string();
         config.style = "Occupation".to_string();
@@ -258,10 +262,10 @@ mod tests {
         let script = build_ds_script(&server, &config);
         assert!(!script.is_empty());
         assert!(script.iter().any(|s| s.contains("sessionname")));
-        // Default domain is "local" -> port line is omitted
+        assert!(script.iter().any(|s| s.contains("domain local")));
         assert!(!script.iter().any(|s| s.starts_with("port ")));
         config.domain = "internet".to_string();
         let script_inet = build_ds_script(&server, &config);
-        assert!(script_inet.iter().any(|s| s.contains("port 22000")));
+        assert!(script_inet.iter().any(|s| s.contains("port 11001")));
     }
 }

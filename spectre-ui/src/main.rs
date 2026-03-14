@@ -78,6 +78,15 @@ pub(crate) fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf
     path
 }
 
+/// Per-server log file: spectre_app_{port}.log in the same directory as spectre_app.log.
+#[cfg(windows)]
+pub(crate) fn app_log_path_for_port(config_path: &std::path::Path, port: u16) -> std::path::PathBuf {
+    let base = app_log_path(config_path);
+    base.parent()
+        .map(|p| p.join(format!("spectre_app_{}.log", port)))
+        .unwrap_or_else(|| base)
+}
+
 #[cfg(windows)]
 pub(crate) fn ensure_log_file_exists(path: &std::path::Path) {
     if let Some(parent) = path.parent() {
@@ -89,12 +98,19 @@ pub(crate) fn ensure_log_file_exists(path: &std::path::Path) {
         .open(path);
 }
 
-/// Append a timestamped line to the app log. If rotation_days > 0 and the file is older than that many days, the file is truncated first.
+/// Append a timestamped line to the app log (default or per-port). If rotation_days > 0 and the file is older than that many days, the file is truncated first.
 #[cfg(windows)]
-fn write_app_log(state: &Arc<Mutex<(std::path::PathBuf, u32)>>, line: &str) {
-    let (path, rotation_days) = match state.lock() {
+fn write_app_log(state: &Arc<Mutex<(std::path::PathBuf, u32)>>, port: Option<u16>, line: &str) {
+    let (base_path, rotation_days) = match state.lock() {
         Ok(guard) => (guard.0.clone(), guard.1),
         Err(_) => return,
+    };
+    let path = match port {
+        Some(p) => base_path
+            .parent()
+            .map(|dir| dir.join(format!("spectre_app_{}.log", p)))
+            .unwrap_or(base_path),
+        None => base_path,
     };
     use std::io::Write;
     let now = chrono::Local::now();
@@ -115,6 +131,9 @@ fn write_app_log(state: &Arc<Mutex<(std::path::PathBuf, u32)>>, line: &str) {
                 }
             }
         }
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
@@ -191,7 +210,7 @@ pub(crate) fn ensure_server_utility_has_defaults(data: &mut spectre_core::server
     if data.servers.is_empty() {
         let mut server = Server::default();
         server.name = "Server 1".to_string();
-        server.port = 22000;
+        server.port = 11001;
         let mut default_config = ServerConfig::default();
         default_config.name = "Default".to_string();
         default_config.session_name = "A Spectre Session".to_string();
@@ -296,7 +315,6 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
         "settings" => include_bytes!("../icons/settings.svg"),
         "info" => include_bytes!("../icons/info.svg"),
         "console" => include_bytes!("../icons/console.svg"),
-        "refresh" => include_bytes!("../icons/refresh.svg"),
         "tray" => include_bytes!("../icons/tray.svg"),
         _ => return None,
     };
@@ -884,7 +902,6 @@ struct SpectreApp {
     #[cfg(windows)]
     ipc_save_rx: Option<mpsc::Receiver<String>>,
     #[cfg(windows)]
-    pending_webview_refresh: bool,
     #[cfg(windows)]
     webview_repaint_frames: u8,
     #[cfg(windows)]
@@ -922,9 +939,6 @@ struct SpectreApp {
     info_icon: Option<TextureHandle>,
     #[cfg(windows)]
     tray_button_icon: Option<TextureHandle>,
-    refresh_icon: Option<TextureHandle>,
-    #[cfg(debug_assertions)]
-    console_icon: Option<TextureHandle>,
     #[cfg(windows)]
     show_server_utility_dashboard: bool,
     #[cfg(windows)]
@@ -954,9 +968,6 @@ impl SpectreApp {
         let info_icon = load_svg_icon(ctx, "info");
         #[cfg(windows)]
         let tray_button_icon = load_svg_icon(ctx, "tray");
-        let refresh_icon = load_svg_icon(ctx, "refresh");
-        #[cfg(debug_assertions)]
-        let console_icon = load_svg_icon(ctx, "console");
 
         Self {
             version: VERSION.to_string(),
@@ -975,8 +986,6 @@ impl SpectreApp {
             webview_fade_alpha: 1.0,
             #[cfg(windows)]
             ipc_save_rx: None,
-            #[cfg(windows)]
-            pending_webview_refresh: false,
             #[cfg(windows)]
             webview_repaint_frames: 0,
             #[cfg(windows)]
@@ -1011,9 +1020,6 @@ impl SpectreApp {
             info_icon,
             #[cfg(windows)]
             tray_button_icon,
-            refresh_icon,
-        #[cfg(debug_assertions)]
-        console_icon,
         #[cfg(windows)]
         show_server_utility_dashboard: false,
         #[cfg(windows)]
@@ -1262,133 +1268,10 @@ impl SpectreApp {
                         }
                     }
                     let rest = ui.available_width();
-                    let right_w = if webview_active {
-                        if cfg!(debug_assertions) {
-                            BTN_W * 2.0 + BTN_GAP
-                        } else {
-                            BTN_W
-                        }
-                    } else {
-                        0.0
-                    };
-                    if rest > right_w {
-                        ui.add_space(rest - right_w);
+                    if rest > 0.0 {
+                        ui.add_space(rest);
                     }
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center).with_main_justify(false),
-                        |ui| {
-                            ui.add_space(ACTION_BAR_RIGHT_MARGIN);
-                            ui.spacing_mut().item_spacing = egui::vec2(BTN_GAP, 0.0);
-                            if webview_active {
-                                let ref_r = ui.allocate_response(
-                                    egui::Vec2::new(BTN_W, BTN_H),
-                                    egui::Sense::click(),
-                                );
-                                let fill = if ref_r.hovered() {
-                                    ui.visuals().widgets.hovered.bg_fill
-                                } else {
-                                    ui.visuals().widgets.inactive.bg_fill
-                                };
-                                ui.painter().rect_filled(ref_r.rect, 4.0, fill);
-                                if let Some(ref t) = self.refresh_icon {
-                                    let r = egui::Rect::from_center_size(
-                                        ref_r.rect.center(),
-                                        egui::vec2(ICON_SZ, ICON_SZ),
-                                    );
-                                    ui.painter().image(
-                                        t.id(),
-                                        r,
-                                        egui::Rect::from_min_max(
-                                            egui::pos2(0.0, 0.0),
-                                            egui::pos2(1.0, 1.0),
-                                        ),
-                                        ui.visuals().text_color(),
-                                    );
-                                } else {
-                                    let galley = ui.painter().layout_no_wrap(
-                                        "↻".to_string(),
-                                        egui::FontId::new(14.0, egui::FontFamily::Proportional),
-                                        ui.visuals().text_color(),
-                                    );
-                                    ui.painter().galley(
-                                        ref_r.rect.center() - galley.size() / 2.0,
-                                        galley,
-                                        ui.visuals().text_color(),
-                                    );
-                                }
-                                if ref_r.clicked() {
-                                    #[cfg(windows)]
-                                    {
-                                        self.pending_webview_refresh = true;
-                                    }
-                                }
-                                if ref_r.hovered() {
-                                    ui.ctx().output_mut(|o| {
-                                        o.cursor_icon = egui::CursorIcon::PointingHand
-                                    });
-                                    ui.label(
-                                        egui::RichText::new("Refresh")
-                                            .size(12.0)
-                                            .color(ui.visuals().weak_text_color()),
-                                    );
-                                }
-                            }
-                            #[cfg(debug_assertions)]
-                            if webview_active {
-                                let dev_r = ui.allocate_response(
-                                    egui::Vec2::new(BTN_W, BTN_H),
-                                    egui::Sense::click(),
-                                );
-                                let fill = if dev_r.hovered() {
-                                    ui.visuals().widgets.hovered.bg_fill
-                                } else {
-                                    ui.visuals().widgets.inactive.bg_fill
-                                };
-                                ui.painter().rect_filled(dev_r.rect, 4.0, fill);
-                                if let Some(ref t) = self.console_icon {
-                                    let r = egui::Rect::from_center_size(
-                                        dev_r.rect.center(),
-                                        egui::vec2(ICON_SZ, ICON_SZ),
-                                    );
-                                    ui.painter().image(
-                                        t.id(),
-                                        r,
-                                        egui::Rect::from_min_max(
-                                            egui::pos2(0.0, 0.0),
-                                            egui::pos2(1.0, 1.0),
-                                        ),
-                                        ui.visuals().text_color(),
-                                    );
-                                } else {
-                                    let galley = ui.painter().layout_no_wrap(
-                                        ">_".to_string(),
-                                        egui::FontId::new(14.0, egui::FontFamily::Proportional),
-                                        ui.visuals().text_color(),
-                                    );
-                                    ui.painter().galley(
-                                        dev_r.rect.center() - galley.size() / 2.0,
-                                        galley,
-                                        ui.visuals().text_color(),
-                                    );
-                                }
-                                if dev_r.clicked() {
-                                    if let Some(ref wv) = self.webview {
-                                        wv.open_devtools();
-                                    }
-                                }
-                                if dev_r.hovered() {
-                                    ui.ctx().output_mut(|o| {
-                                        o.cursor_icon = egui::CursorIcon::PointingHand
-                                    });
-                                    ui.label(
-                                        egui::RichText::new("Open DevTools")
-                                            .size(12.0)
-                                            .color(ui.visuals().weak_text_color()),
-                                    );
-                                }
-                            }
-                        },
-                    );
+                    ui.add_space(ACTION_BAR_RIGHT_MARGIN);
                 },
             );
             let rect = ui.available_rect_before_wrap();
@@ -1414,15 +1297,18 @@ impl SpectreApp {
         let panel_rounding = egui::Rounding::same(4);
         let left_margin = egui::Margin { left: 6, ..Default::default() };
 
-        egui::Frame::none()
-            .inner_margin(left_margin)
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.heading("Server Utility — Web server");
-                ui.add_space(8.0);
+        let full_rect = ui.available_rect_before_wrap();
+        ui.allocate_ui(full_rect.size(), |ui| {
+            egui::Frame::none()
+                .inner_margin(left_margin)
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.set_min_height(ui.available_height());
+                    ui.heading("Server Utility — Web server");
+                    ui.add_space(8.0);
 
-                ui.set_min_width(ui.available_width());
-                egui::Frame::none()
+                    ui.set_min_width(ui.available_width());
+                    egui::Frame::none()
                     .fill(panel_fill)
                     .rounding(panel_rounding)
                     .inner_margin(8.0)
@@ -1548,7 +1434,9 @@ impl SpectreApp {
 
                 ui.add_space(8.0);
 
+                let log_height = ui.available_height().max(280.0).min(500.0);
                 ui.set_min_width(ui.available_width());
+                ui.set_min_height(log_height);
                 egui::Frame::none()
                     .fill(panel_fill)
                     .rounding(panel_rounding)
@@ -1561,7 +1449,7 @@ impl SpectreApp {
                             .map(|h| h.get_log_lines())
                             .unwrap_or_default();
                         egui::ScrollArea::vertical()
-                            .max_height(200.0)
+                            .max_height((log_height - 40.0).max(0.0))
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
                                 if log_lines.is_empty() {
@@ -1573,6 +1461,8 @@ impl SpectreApp {
                                 }
                             });
                     });
+                ui.allocate_space(ui.available_size());
+                });
             });
     }
 
@@ -2267,15 +2157,6 @@ impl SpectreApp {
         }
 
         #[cfg(windows)]
-        {
-            if self.pending_webview_refresh && self.webview.is_some() {
-                self.webview = None;
-                self.pending_webview_card = Some("server_utility".to_string());
-                self.ipc_save_rx = None;
-                self.pending_webview_refresh = false;
-            }
-        }
-        #[cfg(windows)]
         if frame_ref.is_some() {
             if let Some(card_name) = self.pending_webview_card.take() {
                 self.webview_pending_creation = Some(card_name);
@@ -2676,7 +2557,11 @@ impl SpectreApp {
                                     let _ = ipc_tx.send(format!("PLAYER_LIST:{}", list_json));
                                 }
                                 Ok(msg) if msg.action == "get_log_content" => {
-                                    let path = app_log_path(&config_path);
+                                    let path = msg
+                                        .server_index
+                                        .and_then(|i| msg.servers.get(i))
+                                        .map(|s| app_log_path_for_port(&config_path, s.port))
+                                        .unwrap_or_else(|| app_log_path(&config_path));
                                     ensure_log_file_exists(&path);
                                     const MAX_LOG_BYTES: usize = 32 * 1024;
                                     let content = match std::fs::read(&path) {
@@ -2693,20 +2578,6 @@ impl SpectreApp {
                                     }
                                     let _ = ipc_tx.send(format!("LOG_CONTENT:{}", content));
                                 }
-                                Ok(msg) if msg.action == "open_log_file" => {
-                                    let path = app_log_path(&config_path);
-                                    ensure_log_file_exists(&path);
-                                    let abs_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                                    let mut path_str = abs_path.display().to_string();
-                                    if path_str.starts_with(r"\\?\") {
-                                        path_str = path_str[r"\\?\".len()..].to_string();
-                                    }
-                                    let folder = std::path::Path::new(&path_str).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| path.clone());
-                                    let folder_str = folder.display().to_string();
-                                    println!("[Log] open_log_file: path={} folder={}", path.display(), folder_str);
-                                    let _ = std::process::Command::new("explorer").arg(&folder_str).spawn();
-                                    let _ = ipc_tx.send("OK".to_string());
-                                }
                                 Ok(_) => {}
                                 Err(e) => {
                                     println!("[Service] Parse postMessage failed: {}", e);
@@ -2716,9 +2587,7 @@ impl SpectreApp {
                             let _ = std::io::stdout().flush();
                         }
                     })
-                    .with_devtools({
-                        cfg!(debug_assertions)
-                    })
+                    .with_devtools(false)
                     .with_html(&html);
                         match builder.build() {
                             Ok(wv) => {
@@ -3042,9 +2911,10 @@ impl SpectreApp {
                             .ok()
                             .and_then(|m| m.get(&port).cloned());
                         let log_state = self.log_state.clone();
+                        let port = port;
                         let log_callback = move |line: &str| {
                             if let Some(ref state) = log_state {
-                                write_app_log(state, line);
+                                write_app_log(state, Some(port), line);
                             }
                         };
                         let log_ref: Option<&dyn Fn(&str)> = Some(&log_callback);
@@ -3067,7 +2937,7 @@ impl SpectreApp {
                                 let line = format!("[DS-Helper] port {}: {}", port, e);
                                 println!("{}", line);
                                 if let Some(ref state) = self.log_state {
-                                    write_app_log(state, &line);
+                                    write_app_log(state, Some(port), &line);
                                 }
                             }
                         }

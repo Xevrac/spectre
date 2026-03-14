@@ -159,7 +159,7 @@ impl Default for Server {
             watchdog: false,
             messages: false,
             users: Vec::new(),
-            port: 22000,
+            port: 11001,
             use_sabre_squadron: true,
             hd2ds_path: String::new(),
             hd2ds_sabresquadron_path: String::new(),

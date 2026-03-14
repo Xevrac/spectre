@@ -1,11 +1,14 @@
 (function () {
   'use strict';
 
+  const DEFAULT_SERVER_PORT = 11001;
+  const SERVER_PORT_STEP = 4;
+
   const state = {
     servers: [
       {
         name: 'Server 1',
-        port: 22000,
+        port: DEFAULT_SERVER_PORT,
         use_sabre_squadron: true,
         hd2ds_path: '',
         hd2ds_sabresquadron_path: '',
@@ -51,6 +54,7 @@
     ],
     selectedServerIndex: 0,
     selectedConfigIndex: 0,
+    selectedLogServerIndex: 0,
     activeTab: 'console',
     serverStarting: false,
     serverError: false,
@@ -112,6 +116,14 @@
     return s && s.configs[state.selectedConfigIndex] ? s.configs[state.selectedConfigIndex] : null;
   }
 
+  function isServerLocal(server) {
+    if (!server || !server.configs) return false;
+    var c = server.configs.find(function (x) { return x && x.name === server.current_config; });
+    if (!c) c = server.configs[0];
+    var d = (c && c.domain) ? String(c.domain).toLowerCase() : '';
+    return d === 'local' || d === 'lan';
+  }
+
   function renderServerSelect() {
     const el = document.getElementById('server-select');
     if (!el) return;
@@ -123,6 +135,28 @@
       state.selectedConfigIndex = 0;
       render();
     };
+  }
+
+  function renderLogsServerTabs() {
+    const container = document.getElementById('log-server-tabs');
+    if (!container) return;
+    var idx = state.selectedLogServerIndex;
+    if (state.servers.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    if (idx < 0 || idx >= state.servers.length) idx = 0;
+    state.selectedLogServerIndex = idx;
+    var tabsHtml = state.servers.map(function (s, i) {
+      var label = s.name || ('Server ' + (i + 1));
+      var selected = i === idx;
+      return '<button type="button" class="log-server-tab" data-log-server="' + i + '" role="tab" aria-selected="' + selected + '">' + escapeHtml(label) + '</button>';
+    }).join('');
+    container.innerHTML = tabsHtml + '<button type="button" class="log-server-tab log-refresh-btn" id="logs-refresh" title="Reload log content">Refresh</button>';
+    container.querySelectorAll('.log-server-tab').forEach(function (tab) {
+      var i = parseInt(tab.getAttribute('data-log-server'), 10);
+      tab.setAttribute('aria-selected', i === state.selectedLogServerIndex ? 'true' : 'false');
+    });
   }
 
   function renderProfileList() {
@@ -186,7 +220,11 @@
     const domain = (c.domain === 'local' || c.domain === 'Internet') ? c.domain : 'local';
     const domainEl = document.getElementById('domain-' + domain.toLowerCase());
     if (domainEl) domainEl.checked = true;
-    set('max-clients', Math.min(Math.max(c.max_clients || 32, 1), 32));
+    const isCoop = c.style === 'Cooperative';
+    const maxClientsCap = isCoop ? 6 : 32;
+    set('max-clients', Math.min(Math.max(c.max_clients || 32, 1), maxClientsCap));
+    var maxClientsEl = document.getElementById('max-clients');
+    if (maxClientsEl) maxClientsEl.max = String(maxClientsCap);
     set('point-limit', c.point_limit);
     set('round-limit', c.round_limit);
     set('round-count', c.round_count != null ? c.round_count : 1);
@@ -238,7 +276,8 @@
     c.style = get('style-select');
     const domainRadio = document.querySelector('input[name="domain-type"]:checked');
     c.domain = domainRadio ? domainRadio.value : 'local';
-    c.max_clients = Math.min(Math.max(parseInt(get('max-clients'), 10) || 32, 1), 32);
+    var rawMax = Math.min(Math.max(parseInt(get('max-clients'), 10) || 32, 1), 32);
+    c.max_clients = c.style === 'Cooperative' ? Math.min(rawMax, 6) : rawMax;
     c.point_limit = parseInt(get('point-limit'), 10) || 0;
     c.round_limit = parseInt(get('round-limit'), 10) || 5;
     c.round_count = parseInt(get('round-count'), 10);
@@ -372,15 +411,11 @@
   function requestLogContent() {
     if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
       try {
-        window.ipc.postMessage(JSON.stringify({ action: 'get_log_content', servers: state.servers }));
-      } catch (e) { /* ignore */ }
-    }
-  }
-
-  function openLogFile() {
-    if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      try {
-        window.ipc.postMessage(JSON.stringify({ action: 'open_log_file', servers: state.servers }));
+        var payload = { action: 'get_log_content', servers: state.servers };
+        if (state.servers.length && state.selectedLogServerIndex >= 0 && state.selectedLogServerIndex < state.servers.length) {
+          payload.server_index = state.selectedLogServerIndex;
+        }
+        window.ipc.postMessage(JSON.stringify(payload));
       } catch (e) { /* ignore */ }
     }
   }
@@ -510,6 +545,7 @@
   // Coalesce frequent render calls (especially from IPC/status updates) into animation frames
   let renderRequested = false;
   let lastStartServerRunning = null;
+  let lastDisableStart = null;
   let lastRunCount = null;
   let lastStatus = null;
   let lastStatusText = null;
@@ -530,6 +566,7 @@
     if (dupNotice && dupNotice.closest('.sidebar')) dupNotice.remove();
     renderServerSelect();
     renderProfileList();
+    renderLogsServerTabs();
     renderTabs();
     bindFormToConfig();
     renderAvailableMapList();
@@ -543,10 +580,22 @@
     var startServerBtn = document.getElementById('start-server');
     if (startServerBtn && s) {
       var isRunning = !!s.running;
-      if (lastStartServerRunning !== isRunning) {
+      var selectedLocal = isServerLocal(s);
+      var anotherLocalRunning = state.servers.some(function (sv, i) {
+        return i !== state.selectedServerIndex && isServerLocal(sv) && sv.running;
+      });
+      var disableStart = selectedLocal && !isRunning && anotherLocalRunning;
+      if (lastStartServerRunning !== isRunning || lastDisableStart !== disableStart) {
         lastStartServerRunning = isRunning;
+        lastDisableStart = disableStart;
         startServerBtn.textContent = isRunning ? 'Stop Server' : 'Start Server';
         startServerBtn.className = isRunning ? 'btn btn-start btn-stop' : 'btn btn-start';
+      }
+      startServerBtn.disabled = disableStart;
+      if (disableStart) {
+        startServerBtn.setAttribute('data-tooltip', '1 local server may run at a time.');
+      } else {
+        startServerBtn.removeAttribute('data-tooltip');
       }
     }
     var startAllBtn = document.getElementById('start-all-servers');
@@ -697,6 +746,7 @@
     const c = getSelectedConfig();
     if (s && c) {
       s.current_config = c.name;
+      s.name = c.name;
       setUnsaved(true);
       render();
       showMessage('Profile selected');
@@ -705,8 +755,8 @@
 
   document.getElementById('server-add')?.addEventListener('click', function () {
     bindConfigToForm();
-    const ports = state.servers.map(function (s) { return s.port || 22000; });
-    const nextPort = ports.length ? Math.max.apply(null, ports) + 1 : 22000;
+    const ports = state.servers.map(function (s) { return s.port || DEFAULT_SERVER_PORT; });
+    const nextPort = ports.length ? Math.max.apply(null, ports) + SERVER_PORT_STEP : DEFAULT_SERVER_PORT;
     const newServer = {
       name: 'New profile',
       running: false,
@@ -823,7 +873,8 @@
     const dialog = document.getElementById('edit-server-dialog');
     if (portEl && dialog) {
       if (nameEl) nameEl.value = s.name != null ? s.name : '';
-      portEl.value = s.port || 22000;
+      portEl.value = s.port || DEFAULT_SERVER_PORT;
+      portEl.disabled = isServerLocal(s);
       if (hd2dsEl) hd2dsEl.value = s.hd2ds_path != null ? trimPathQuotes(s.hd2ds_path) : '';
       if (sabreEl) sabreEl.value = s.hd2ds_sabresquadron_path != null ? trimPathQuotes(s.hd2ds_sabresquadron_path) : '';
       var pairs = getDuplicateHd2Pairs();
@@ -866,14 +917,17 @@
     const dialog = document.getElementById('edit-server-dialog');
     const validationRow = document.getElementById('edit-server-validation');
     if (!s || !portEl || !dialog) return;
-    const port = parseInt(portEl.value, 10);
-    if (port < 1 || port > 65535) return;
-    const otherHasPort = state.servers.some(function (sv, i) {
-      return i !== state.selectedServerIndex && (sv.port || 22000) === port;
-    });
-    if (otherHasPort) {
-      showMessage('Another server already uses that port.', true);
-      return;
+    if (!portEl.disabled) {
+      const port = parseInt(portEl.value, 10);
+      if (port < 1 || port > 65535) return;
+      const otherHasPort = state.servers.some(function (sv, i) {
+        return i !== state.selectedServerIndex && (sv.port || DEFAULT_SERVER_PORT) === port;
+      });
+      if (otherHasPort) {
+        showMessage('Another server already uses that port.', true);
+        return;
+      }
+      s.port = port;
     }
     var validationErrs = getEditServerValidationErrors();
     if (validationErrs.length > 0) {
@@ -897,7 +951,6 @@
         s.current_config = newName;
       }
     }
-    s.port = port;
     s.hd2ds_path = hd2dsEl ? trimPathQuotes(hd2dsEl.value) : (s.hd2ds_path || '');
     s.hd2ds_sabresquadron_path = sabreEl ? trimPathQuotes(sabreEl.value) : (s.hd2ds_sabresquadron_path || '');
     setUnsaved(true);
@@ -944,9 +997,17 @@
   }
 
   document.getElementById('start-server')?.addEventListener('click', function () {
+    var startBtn = document.getElementById('start-server');
+    if (startBtn && startBtn.disabled) return;
     bindConfigToForm();
     ensureCurrentConfigs();
     var s = getSelectedServer();
+    if (s && s.configs) {
+      var domainRadio = document.querySelector('input[name="domain-type"]:checked');
+      var domainVal = domainRadio ? domainRadio.value : 'local';
+      var cur = s.configs.find(function (c) { return c && c.name === s.current_config; });
+      if (cur) cur.domain = domainVal;
+    }
     if (!s || typeof window.ipc === 'undefined' || !window.ipc.postMessage) {
       if (s) ipcLog('Start/Stop Server (bridge not wired)');
       return;
@@ -1248,7 +1309,10 @@
   document.getElementById('style-select')?.addEventListener('change', function () {
     bindConfigToForm();
     const c = getSelectedConfig();
-    if (c) c.maps = [];
+    if (c) {
+      if (c.style === 'Cooperative' && c.max_clients > 6) c.max_clients = 6;
+      c.maps = [];
+    }
     setUnsaved(true);
     render();
   });
@@ -1414,13 +1478,23 @@
     }
   };
 
-  document.getElementById('logs-refresh')?.addEventListener('click', function () {
-    requestLogContent();
+  document.getElementById('log-server-tabs')?.addEventListener('click', function (e) {
+    var target = e.target;
+    if (target.id === 'logs-refresh') {
+      requestLogContent();
+      return;
+    }
+    if (target.classList.contains('log-server-tab')) {
+      var i = parseInt(target.getAttribute('data-log-server'), 10);
+      if (!isNaN(i) && i >= 0 && i < state.servers.length) {
+        state.selectedLogServerIndex = i;
+        this.querySelectorAll('.log-server-tab').forEach(function (tab) {
+          tab.setAttribute('aria-selected', parseInt(tab.getAttribute('data-log-server'), 10) === i ? 'true' : 'false');
+        });
+        requestLogContent();
+      }
+    }
   });
-  document.getElementById('logs-open-folder')?.addEventListener('click', function () {
-    openLogFile();
-  });
-
   document.getElementById('mpmaplist-clear')?.addEventListener('click', function () {
     bindConfigToForm();
     var el = document.getElementById('mpmaplist-path');

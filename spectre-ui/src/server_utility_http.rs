@@ -458,7 +458,11 @@ fn handle_ipc(
             responses.push(format!("PLAYER_LIST:{}", list_json));
         }
         "get_log_content" => {
-            let path = crate::app_log_path(config_path);
+            let path = msg
+                .server_index
+                .and_then(|i| msg.servers.get(i))
+                .map(|s| crate::app_log_path_for_port(config_path, s.port))
+                .unwrap_or_else(|| crate::app_log_path(config_path));
             crate::ensure_log_file_exists(&path);
             const MAX_LOG_BYTES: usize = 32 * 1024;
             let content = match std::fs::read(&path) {
@@ -492,22 +496,6 @@ fn handle_ipc(
         }
         "browse_mpmaplist" | "browse_hd2_dir" => {
             responses.push("BROWSE_NOT_AVAILABLE".to_string());
-        }
-        "open_log_file" => {
-            let path = crate::app_log_path(config_path);
-            crate::ensure_log_file_exists(&path);
-            let abs_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            let mut path_str = abs_path.display().to_string();
-            if path_str.starts_with(r"\\?\") {
-                path_str = path_str[r"\\?\".len()..].to_string();
-            }
-            let folder = std::path::Path::new(&path_str)
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| path.clone());
-            let folder_str = folder.display().to_string();
-            let _ = std::process::Command::new("explorer").arg(&folder_str).spawn();
-            responses.push("OK".to_string());
         }
         _ => {}
     }
