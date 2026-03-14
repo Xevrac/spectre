@@ -56,6 +56,25 @@ pub(crate) fn server_utility_config_path() -> std::path::PathBuf {
         .join("hd2_server_config.json")
 }
 
+/// Load persisted PIDs from spectre_config; only return entries whose process is still running.
+#[cfg(windows)]
+pub(crate) fn load_persisted_pids(config: &Config) -> HashMap<u16, u32> {
+    config
+        .server_pids
+        .iter()
+        .filter_map(|(k, &pid)| k.parse::<u16>().ok().filter(|_| process_is_alive(pid)).map(|port| (port, pid)))
+        .collect()
+}
+
+/// Update spectre_config.server_pids and save spectre_config.json.
+#[cfg(windows)]
+pub(crate) fn save_persisted_pids(shared_config: &Arc<Mutex<Config>>, pids: &HashMap<u16, u32>) {
+    if let Ok(mut c) = shared_config.lock() {
+        c.set_server_pids(pids);
+        c.save();
+    }
+}
+
 /// Path to the app log file in content/server_utility. Prefer canonical exe path so it is absolute.
 #[cfg(windows)]
 pub(crate) fn app_log_path(_config_path: &std::path::Path) -> std::path::PathBuf {
@@ -886,7 +905,7 @@ fn main() -> Result<(), eframe::Error> {
 
 struct SpectreApp {
     version: String,
-    config: Config,
+    config: Arc<Mutex<Config>>,
     current_module: Option<Box<dyn Module>>,
     show_about: bool,
     show_options: bool,
@@ -957,8 +976,10 @@ impl SpectreApp {
         let splash = SplashScreen::new(ctx);
         println!("[Spectre.dbg] Splash screen initialized");
 
-        let config = Config::load();
+        let config = Arc::new(Mutex::new(Config::load()));
         println!("[Spectre.dbg] Configuration loaded");
+        #[cfg(windows)]
+        let initial_pids = load_persisted_pids(&config.lock().unwrap());
 
         Self::apply_theme(ctx);
 
@@ -971,7 +992,7 @@ impl SpectreApp {
 
         Self {
             version: VERSION.to_string(),
-            config,
+            config: config.clone(),
             current_module: None,
             show_about: false,
             show_options: false,
@@ -989,7 +1010,7 @@ impl SpectreApp {
             #[cfg(windows)]
             webview_repaint_frames: 0,
             #[cfg(windows)]
-            server_pids: Arc::new(Mutex::new(HashMap::new())),
+            server_pids: Arc::new(Mutex::new(initial_pids)),
             #[cfg(windows)]
             last_watchdog_check: None,
             #[cfg(windows)]
@@ -1328,7 +1349,7 @@ impl SpectreApp {
                             if !running {
                                 if self.server_utility_port_input.is_empty() {
                                     self.server_utility_port_input =
-                                        self.config.server_utility_http_port.to_string();
+                                        self.config.lock().unwrap().server_utility_http_port.to_string();
                                 }
                                 let port_edit_id = egui::Id::new("server_utility_port");
                                 let response = ui.add(
@@ -1341,8 +1362,10 @@ impl SpectreApp {
                                     let parsed = self.server_utility_port_input.trim().parse::<u16>().ok();
                                     if let Some(p) = parsed {
                                         let p = p.clamp(1024, 65535);
-                                        self.config.server_utility_http_port = p;
-                                        self.config.save();
+                                        if let Ok(mut c) = self.config.lock() {
+                                            c.server_utility_http_port = p;
+                                            c.save();
+                                        }
                                         self.server_utility_port_input = p.to_string();
                                     }
                                 }
@@ -1350,8 +1373,10 @@ impl SpectreApp {
                                     let parsed = self.server_utility_port_input.trim().parse::<u16>().ok();
                                     if let Some(p) = parsed {
                                         let p = p.clamp(1024, 65535);
-                                        self.config.server_utility_http_port = p;
-                                        self.config.save();
+                                        if let Ok(mut c) = self.config.lock() {
+                                            c.server_utility_http_port = p;
+                                            c.save();
+                                        }
                                         self.server_utility_port_input = p.to_string();
                                     }
                                 }
@@ -1387,10 +1412,11 @@ impl SpectreApp {
                                         .map(|p| p.join("http_server.log"))
                                         .unwrap_or_else(|| std::path::PathBuf::from("content/server_utility/http_server.log"));
                                     let log_max_size_bytes =
-                                        (self.config.server_utility_log_max_mb * 1024.0 * 1024.0) as u64;
+                                        (self.config.lock().unwrap().server_utility_log_max_mb * 1024.0 * 1024.0) as u64;
                                     let state = server_utility_http::ServerUtilityHttpState {
                                         config_path: config_path.clone(),
                                         server_pids: self.server_pids.clone(),
+                                        shared_config: Some(self.config.clone()),
                                         log_state: self.log_state.clone(),
                                         helper_kicked: Some(self.helper_kicked.clone()),
                                         helper_last_slots: Some(self.helper_last_slots.clone()),
@@ -1398,7 +1424,7 @@ impl SpectreApp {
                                         log_file_path: Some(log_file_path),
                                         log_max_size_bytes,
                                     };
-                                    match server_utility_http::start(self.config.server_utility_http_port, state) {
+                                    match server_utility_http::start(self.config.lock().unwrap().server_utility_http_port, state) {
                                         Ok(handle) => {
                                             self.server_utility_http = Some(handle);
                                             ensure_log_file_exists(&app_log_path(&config_path));
@@ -1735,7 +1761,7 @@ impl SpectreApp {
                                     if clicked && *is_ready {
                                         match idx {
                                             0 => {
-                                                if !self.config.server_utility_wizard_completed {
+                                                if !self.config.lock().unwrap().server_utility_wizard_completed {
                                                     self.current_module =
                                                         Some(Box::new(ServerLauncher::default()));
                                                 } else {
@@ -2270,6 +2296,7 @@ impl SpectreApp {
                         let config_path = server_utility_config_path();
                         let (ipc_tx, ipc_rx) = mpsc::channel();
                         let shared_pids = self.server_pids.clone();
+                        let shared_config = self.config.clone();
                         let shared_helper_kicked: Option<
                             Arc<Mutex<HashMap<u16, HashSet<String>>>>,
                         > = {
@@ -2290,6 +2317,7 @@ impl SpectreApp {
                         let config_path = config_path.clone();
                         let ipc_tx = ipc_tx.clone();
                         let shared_pids = shared_pids.clone();
+                        let shared_config = shared_config.clone();
                         let shared_helper_kicked = shared_helper_kicked.clone();
                         #[cfg(windows)]
                         let shared_helper_last_slots = shared_helper_last_slots.clone();
@@ -2355,11 +2383,13 @@ impl SpectreApp {
                                             Some(server) => {
                                                 let ipc_tx_b = ipc_tx.clone();
                                                 let pids_b = shared_pids.clone();
+                                                let shared_config_b = shared_config.clone();
                                                 std::thread::spawn(move || {
                                                     let result = spectre_core::ds_launch::start_ds(&server).map(|pid| (server.port, pid));
                                                     if let Ok((port, pid)) = &result {
                                                         if let Ok(mut pids) = pids_b.lock() {
                                                             pids.insert(*port, *pid);
+                                                            save_persisted_pids(&shared_config_b, &pids);
                                                         }
                                                         println!("[Service] Start server {} OK (port {} pid {})", idx, port, pid);
                                                     } else {
@@ -2415,6 +2445,7 @@ impl SpectreApp {
                                     if let Some(servers) = pre {
                                         let ipc_tx_b = ipc_tx.clone();
                                         let pids_b = shared_pids.clone();
+                                        let shared_config_b = shared_config.clone();
                                         std::thread::spawn(move || {
                                             let mut errs = Vec::new();
                                             let mut started = Vec::new();
@@ -2428,6 +2459,7 @@ impl SpectreApp {
                                                 for (port, pid) in started {
                                                     pids.insert(port, pid);
                                                 }
+                                                save_persisted_pids(&shared_config_b, &pids);
                                             }
                                             if errs.is_empty() {
                                                 println!("[Service] Start all servers OK");
@@ -2460,6 +2492,7 @@ impl SpectreApp {
                                                 if let Ok(mut last) = shared_helper_last_slots.lock() {
                                                     last.remove(&port);
                                                 }
+                                                save_persisted_pids(&shared_config, &pids);
                                                 drop(pids);
                                                 if kill_process_by_pid(pid) {
                                                     println!("[Service] Stopped server {} (port {} pid {})", idx, port, pid);
@@ -2498,6 +2531,7 @@ impl SpectreApp {
                                             last.remove(port);
                                         }
                                     }
+                                    save_persisted_pids(&shared_config, &pids);
                                     drop(pids);
                                     for (_, pid) in &to_stop {
                                         kill_process_by_pid(*pid);
@@ -2993,7 +3027,7 @@ impl SpectreApp {
                 println!("[Spectre.dbg] Splash screen finished, transitioning to main application");
                 self.splash_screen = None;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
-                let is_fullscreen = self.config.fullscreen_dialogs;
+                let is_fullscreen = self.config.lock().unwrap().fullscreen_dialogs;
                 if is_fullscreen {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                     println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
@@ -3076,46 +3110,50 @@ impl SpectreApp {
                 .max_size(options_max)
                 .default_pos(options_pos)
                 .show(ctx, |ui| {
-                    if ui.checkbox(&mut self.config.fullscreen_dialogs, "Fullscreen Application").changed() {
-                        if self.config.fullscreen_dialogs {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-                            println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
-                        } else {
-                            const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
-                            const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
-                            let monitor_size = ctx.input(|i| i.viewport().monitor_size)
-                                .or_else(|| Some(ctx.screen_rect().size()));
-                            let (w, h) = if let Some(ref m) = monitor_size {
-                                let max_w = (m.x * 0.95).max(MIN_WINDOW_SIZE.0);
-                                let max_h = (m.y * 0.95).max(MIN_WINDOW_SIZE.1);
-                                (APP_WINDOW_SIZE.0.min(max_w), APP_WINDOW_SIZE.1.min(max_h))
+                    if let Ok(mut c) = self.config.lock() {
+                        if ui.checkbox(&mut c.fullscreen_dialogs, "Fullscreen Application").changed() {
+                            if c.fullscreen_dialogs {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                                println!("[Spectre.dbg] Application set to windowed fullscreen (maximized)");
                             } else {
-                                APP_WINDOW_SIZE
-                            };
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
-                            if let Some(monitor_size) = monitor_size {
-                                let center_x = (monitor_size.x - w) / 2.0;
-                                let center_y = (monitor_size.y - h) / 2.0;
-                                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
-                            } else {
-                                let screen_size = ctx.screen_rect().size();
-                                let center_x = (screen_size.x - w) / 2.0;
-                                let center_y = (screen_size.y - h) / 2.0;
-                                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
+                                const APP_WINDOW_SIZE: (f32, f32) = (1280.0, 1000.0);
+                                const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
+                                let monitor_size = ctx.input(|i| i.viewport().monitor_size)
+                                    .or_else(|| Some(ctx.screen_rect().size()));
+                                let (w, h) = if let Some(ref m) = monitor_size {
+                                    let max_w = (m.x * 0.95).max(MIN_WINDOW_SIZE.0);
+                                    let max_h = (m.y * 0.95).max(MIN_WINDOW_SIZE.1);
+                                    (APP_WINDOW_SIZE.0.min(max_w), APP_WINDOW_SIZE.1.min(max_h))
+                                } else {
+                                    APP_WINDOW_SIZE
+                                };
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                                if let Some(monitor_size) = monitor_size {
+                                    let center_x = (monitor_size.x - w) / 2.0;
+                                    let center_y = (monitor_size.y - h) / 2.0;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
+                                } else {
+                                    let screen_size = ctx.screen_rect().size();
+                                    let center_x = (screen_size.x - w) / 2.0;
+                                    let center_y = (screen_size.y - h) / 2.0;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
+                                }
+                                println!("[Spectre.dbg] Application restored to windowed mode ({}x{}, centered)", w, h);
                             }
-                            println!("[Spectre.dbg] Application restored to windowed mode ({}x{}, centered)", w, h);
+                            c.save();
                         }
-                        self.config.save();
                     }
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.label("Server Utility HTTP log max size (MB):");
-                        let mut mb = self.config.server_utility_log_max_mb;
+                        let mut mb = self.config.lock().unwrap().server_utility_log_max_mb;
                         if ui.add(egui::DragValue::new(&mut mb).range(0.5..=100.0).speed(0.5)).changed() {
-                            self.config.server_utility_log_max_mb = mb;
-                            self.config.save();
+                            if let Ok(mut c) = self.config.lock() {
+                                c.server_utility_log_max_mb = mb;
+                                c.save();
+                            }
                         }
                     });
 
@@ -3123,7 +3161,9 @@ impl SpectreApp {
                     ui.separator();
 
                     if ui.button("Close").clicked() {
-                        self.config.save();
+                        if let Ok(c) = self.config.lock() {
+                            c.save();
+                        }
                         println!("[Spectre.dbg] Options dialog closed");
                         self.show_options = false;
                     }
@@ -3310,7 +3350,9 @@ impl SpectreApp {
                 self.show_server_utility_dashboard = false;
             }
             self.current_module = None;
-            self.config = Config::load();
+            if let Ok(mut c) = self.config.lock() {
+                *c = Config::load();
+            }
         }
 
         // Keep updating when window is not focused (e.g. on second monitor) so server status,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -41,6 +42,8 @@ pub struct Config {
     pub server_utility_http_port: u16,
     #[serde(default = "default_server_utility_log_max_mb")]
     pub server_utility_log_max_mb: f32,
+    #[serde(default)]
+    pub server_pids: HashMap<String, u32>,
 }
 
 fn default_server_utility_http_port() -> u16 {
@@ -64,11 +67,16 @@ impl Default for Config {
             server_utility_wizard_completed: false,
             server_utility_http_port: 8765,
             server_utility_log_max_mb: 10.0,
+            server_pids: HashMap::new(),
         }
     }
 }
 
 impl Config {
+    pub fn set_server_pids(&mut self, pids: &HashMap<u16, u32>) {
+        self.server_pids = pids.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    }
+
     pub fn load() -> Self {
         if Path::new(CONFIG_FILE).exists() {
             if let Ok(contents) = fs::read_to_string(CONFIG_FILE) {

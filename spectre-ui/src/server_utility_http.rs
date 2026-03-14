@@ -13,8 +13,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use rand::Rng;
 use serde::Deserialize;
+use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,13 +26,13 @@ use tokio::sync::oneshot;
 const MAX_LOG_LINES: usize = 500;
 const IPC_TOKEN_HEADER: &str = "x-spectre-token";
 const MAX_PATH_LEN: usize = 2048;
+const IPC_TOKEN_SALT: &str = "spectre-server-utility-ipc-v1";
 
-fn generate_token() -> String {
-    rand::thread_rng()
-        .sample_iter(rand::distributions::Alphanumeric)
-        .take(32)
-        .map(char::from)
-        .collect()
+fn derive_ipc_token() -> String {
+    let hwid = crate::config::get_machine_id();
+    let input = format!("{}:{}", IPC_TOKEN_SALT, hwid);
+    let digest = sha2::Sha256::digest(input.as_bytes());
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 fn is_path_safe(s: &str) -> bool {
@@ -105,6 +105,7 @@ fn is_allowed_sabre_exe_path(path: &str) -> bool {
 pub struct ServerUtilityHttpState {
     pub config_path: PathBuf,
     pub server_pids: Arc<std::sync::Mutex<HashMap<u16, u32>>>,
+    pub shared_config: Option<Arc<std::sync::Mutex<crate::config::Config>>>,
     pub log_state: Option<Arc<std::sync::Mutex<(PathBuf, u32)>>>,
     pub helper_kicked: Option<Arc<std::sync::Mutex<HashMap<u16, HashSet<String>>>>>,
     pub helper_last_slots: Option<Arc<std::sync::Mutex<HashMap<u16, Vec<(String, String)>>>>>,
@@ -278,6 +279,9 @@ fn handle_ipc(
                             Ok(pid) => {
                                 if let Ok(mut pids) = shared_pids.lock() {
                                     pids.insert(server.port, pid);
+                                    if let Some(ref sc) = state.shared_config {
+                                        crate::save_persisted_pids(sc, &pids);
+                                    }
                                 }
                                 responses.push("Started OK".to_string());
                             }
@@ -307,6 +311,9 @@ fn handle_ipc(
                     }
                     if let Some(ref last) = shared_helper_last_slots {
                         let _ = last.lock().map(|mut m| m.remove(&port));
+                    }
+                    if let Some(ref sc) = state.shared_config {
+                        crate::save_persisted_pids(sc, &pids);
                     }
                     drop(pids);
                     let status = if crate::kill_process_by_pid(pid) {
@@ -343,6 +350,9 @@ fn handle_ipc(
                 if let Some(ref last) = shared_helper_last_slots {
                     let _ = last.lock().map(|mut m| m.remove(port));
                 }
+            }
+            if let Some(ref sc) = state.shared_config {
+                crate::save_persisted_pids(sc, &pids);
             }
             drop(pids);
             for (_, pid) in &to_stop {
@@ -398,6 +408,9 @@ fn handle_ipc(
             if let Ok(mut pids) = pids_b.lock() {
                 for (port, pid) in started {
                     pids.insert(port, pid);
+                }
+                if let Some(ref sc) = state.shared_config {
+                    crate::save_persisted_pids(sc, &pids);
                 }
             }
             let status = if errs.is_empty() {
@@ -630,7 +643,7 @@ pub fn start(
     let request_log = state.request_log.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let token = generate_token();
+    let token = derive_ipc_token();
     let app_state = AppState {
         inner: state,
         shutdown: shutdown.clone(),
