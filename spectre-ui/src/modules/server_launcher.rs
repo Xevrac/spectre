@@ -36,6 +36,7 @@ pub struct ServerLauncher {
     directplay_check_rx: Option<mpsc::Receiver<Result<bool, String>>>,
     directplay_install_rx: Option<mpsc::Receiver<Result<(), String>>>,
     directplay_error: Option<String>,
+    wizard_advanced_mode: bool,
 }
 
 impl ServerLauncher {
@@ -127,6 +128,7 @@ impl Default for ServerLauncher {
             directplay_check_rx: None,
             directplay_install_rx: None,
             directplay_error: None,
+            wizard_advanced_mode: false,
         }
     }
 }
@@ -194,7 +196,8 @@ impl ServerLauncher {
         };
 
         let directplay_ok = step == 0 && self.directplay_detection_result == Some(true);
-        let step_valid = directplay_ok && registry_ok_cached && hosts_ok_cached;
+        let step_valid = self.wizard_advanced_mode
+            || (directplay_ok && registry_ok_cached && hosts_ok_cached);
 
         let mut next_clicked = false;
         let mut back_clicked = false;
@@ -215,6 +218,13 @@ impl ServerLauncher {
                         egui::RichText::new(format!("Step {} of {}", step + 1, WIZARD_STEPS))
                             .strong(),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let r = ui.add(egui::Checkbox::new(
+                            &mut self.wizard_advanced_mode,
+                            egui::RichText::new("Advanced mode").size(11.0),
+                        ));
+                        r.on_hover_text("Skips steps for advanced users.");
+                    });
                 });
                 ui.add_space(12.0);
 
@@ -282,8 +292,6 @@ impl ServerLauncher {
                     ui.add_space(12.0);
 
                     let registry_ok = registry_ok_cached;
-                    let hosts_ok = hosts_ok_cached;
-
                     let directplay_pending = self.directplay_check_rx.is_some() || self.directplay_install_rx.is_some();
                     ui.horizontal(|ui| {
                         if directplay_ok {
@@ -415,7 +423,7 @@ impl ServerLauncher {
                         }
 
                     ui.horizontal(|ui| {
-                        if hosts_ok {
+                        if hosts_ok_cached {
                             if let Some(ref icon) = self.check_icon {
                                 let size = 16.0;
                                 ui.image((icon.id(), egui::vec2(size, size)));
@@ -424,6 +432,12 @@ impl ServerLauncher {
                             ui.colored_label(
                                 egui::Color32::from_rgb(80, 180, 80),
                                 "GameSpy hosts file entries are present.",
+                            );
+                        } else if self.wizard_advanced_mode {
+                            ui.label(
+                                egui::RichText::new("GameSpy hosts skipped (advanced mode).")
+                                    .size(12.0)
+                                    .color(ui.visuals().weak_text_color()),
                             );
                         } else {
                             if let Some(ref icon) = self.cross_icon {
@@ -437,7 +451,7 @@ impl ServerLauncher {
                             );
                         }
                     });
-                    if !hosts_ok {
+                    if !hosts_ok_cached && !self.wizard_advanced_mode {
                         ui.add_space(4.0);
                         ui.label(
                             egui::RichText::new(
