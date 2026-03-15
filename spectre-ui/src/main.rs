@@ -28,12 +28,6 @@ const AUTHOR: &str = "Xevrac";
 const ABOUT: &str = "Spectre is a toolkit for Hidden & Dangerous 2, providing various editing and management tools for the game.";
 
 #[cfg(windows)]
-static MINIMIZE_TO_TRAY_REQUESTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(windows)]
-static mut TRAY_ORIGINAL_WNDPROC: isize = 0;
-
-#[cfg(windows)]
 #[derive(serde::Deserialize)]
 struct IpcSaveMessage {
     action: String,
@@ -299,17 +293,6 @@ fn load_icon() -> Option<Arc<IconData>> {
     Some(Arc::new(create_default_icon()))
 }
 
-#[cfg(windows)]
-fn load_tray_icon() -> Option<tray_icon::Icon> {
-    let icon_bytes = include_bytes!("../spectre_256.png");
-    let image = image::load_from_memory(icon_bytes).ok()?;
-    let rgba = image.to_rgba8();
-    let small = image::imageops::resize(&rgba, 16, 16, image::imageops::FilterType::Triangle);
-    let (w, h) = small.dimensions();
-    let bytes = small.into_raw();
-    tray_icon::Icon::from_rgba(bytes, w, h).ok()
-}
-
 fn create_default_icon() -> IconData {
     let size: u32 = 256;
     let size_usize = size as usize;
@@ -340,7 +323,6 @@ fn load_svg_icon(ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
         "settings" => include_bytes!("../icons/settings.svg"),
         "info" => include_bytes!("../icons/info.svg"),
         "console" => include_bytes!("../icons/console.svg"),
-        "tray" => include_bytes!("../icons/tray.svg"),
         _ => return None,
     };
 
@@ -387,35 +369,6 @@ fn get_main_window_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundat
 }
 
 #[cfg(windows)]
-fn get_main_window_hwnd_opt(
-    frame: Option<&eframe::Frame>,
-) -> Option<windows::Win32::Foundation::HWND> {
-    frame.and_then(get_main_window_hwnd)
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn tray_minimize_wndproc(
-    hwnd: windows::Win32::Foundation::HWND,
-    msg: u32,
-    wparam: windows::Win32::Foundation::WPARAM,
-    lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::Win32::Foundation::LRESULT {
-    use std::sync::atomic::Ordering;
-    use windows::Win32::UI::WindowsAndMessaging::{CallWindowProcW, DefWindowProcW, WNDPROC};
-    const WM_SYSCOMMAND: u32 = 0x0112;
-    const SC_MINIMIZE: u32 = 0xF020;
-    if msg == WM_SYSCOMMAND && wparam.0 as u32 == SC_MINIMIZE {
-        MINIMIZE_TO_TRAY_REQUESTED.store(true, Ordering::SeqCst);
-        return windows::Win32::Foundation::LRESULT(0);
-    }
-    let prev = TRAY_ORIGINAL_WNDPROC;
-    if prev == 0 {
-        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
-    }
-    let prev_proc: WNDPROC = std::mem::transmute(prev);
-    unsafe { CallWindowProcW(prev_proc, hwnd, msg, wparam, lparam) }
-}
-
 #[cfg(windows)]
 fn get_webview_hwnd(frame: &eframe::Frame) -> Option<windows::Win32::Foundation::HWND> {
     use windows::Win32::Foundation::LPARAM;
@@ -980,29 +933,12 @@ struct SpectreApp {
     #[cfg(windows)]
     automated_announce_index_per_port: Arc<Mutex<HashMap<u16, usize>>>,
     #[cfg(windows)]
-    tray_icon: Option<tray_icon::TrayIcon>,
-    #[cfg(windows)]
-    tray_show_id: Option<tray_icon::menu::MenuId>,
-    #[cfg(windows)]
-    tray_quit_id: Option<tray_icon::menu::MenuId>,
-    #[cfg(windows)]
-    window_hidden_to_tray: bool,
-    #[cfg(windows)]
-    pending_hide_to_tray: bool,
-    #[cfg(windows)]
-    tray_subclass_done: bool,
-    /// When minimized to tray: (x, y, width, height) to restore.
-    #[cfg(windows)]
-    saved_tray_rect: Option<(i32, i32, i32, i32)>,
-    #[cfg(windows)]
     helper_kicked: Arc<Mutex<HashMap<u16, HashSet<String>>>>,
     #[cfg(windows)]
     helper_last_slots: Arc<Mutex<HashMap<u16, Vec<(String, String)>>>>,
     /// (log file path, rotation_days) for app log. Set when Server Launcher webview is created.
     #[cfg(windows)]
     log_state: Option<Arc<Mutex<(std::path::PathBuf, u32)>>>,
-    #[cfg(windows)]
-    background_timer_set: bool,
     splash_screen: Option<SplashScreen>,
     window_centered: bool,
     center_attempts: u32,
@@ -1010,8 +946,6 @@ struct SpectreApp {
     home_icon: Option<TextureHandle>,
     settings_icon: Option<TextureHandle>,
     info_icon: Option<TextureHandle>,
-    #[cfg(windows)]
-    tray_button_icon: Option<TextureHandle>,
     #[cfg(windows)]
     show_server_utility_dashboard: bool,
     #[cfg(windows)]
@@ -1044,8 +978,6 @@ impl SpectreApp {
         let home_icon = load_svg_icon(ctx, "home");
         let settings_icon = load_svg_icon(ctx, "settings");
         let info_icon = load_svg_icon(ctx, "info");
-        #[cfg(windows)]
-        let tray_button_icon = load_svg_icon(ctx, "tray");
 
         Self {
             version: VERSION.to_string(),
@@ -1083,26 +1015,11 @@ impl SpectreApp {
             #[cfg(windows)]
             automated_announce_index_per_port: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(windows)]
-            tray_icon: None,
-            #[cfg(windows)]
-            tray_show_id: None,
-            #[cfg(windows)]
-            tray_quit_id: None,
-            #[cfg(windows)]
-            window_hidden_to_tray: false,
-            #[cfg(windows)]
-            pending_hide_to_tray: false,
-            #[cfg(windows)]
-            tray_subclass_done: false,
-            #[cfg(windows)]
-            saved_tray_rect: None,
-            #[cfg(windows)]
             helper_kicked: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(windows)]
             helper_last_slots: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(windows)]
             log_state: None,
-            background_timer_set: false,
             splash_screen: Some(splash),
             window_centered: false,
             center_attempts: 0,
@@ -1111,9 +1028,7 @@ impl SpectreApp {
             settings_icon,
             info_icon,
             #[cfg(windows)]
-            tray_button_icon,
-        #[cfg(windows)]
-        show_server_utility_dashboard: false,
+            show_server_utility_dashboard: false,
         #[cfg(windows)]
         server_utility_http: None,
         #[cfg(windows)]
@@ -1287,60 +1202,6 @@ impl SpectreApp {
                         } else {
                             egui::containers::Tooltip::for_enabled(&info_r)
                                 .show(|ui| ui.label("About"));
-                        }
-                    }
-                    #[cfg(windows)]
-                    if self.tray_icon.is_some() {
-                        let tray_r = ui
-                            .allocate_response(egui::Vec2::new(BTN_W, BTN_H), egui::Sense::click());
-                        let fill = if tray_r.hovered() {
-                            ui.visuals().widgets.hovered.bg_fill
-                        } else {
-                            ui.visuals().widgets.inactive.bg_fill
-                        };
-                        ui.painter().rect_filled(tray_r.rect, 4.0, fill);
-                        if let Some(ref t) = self.tray_button_icon {
-                            let r = egui::Rect::from_center_size(
-                                tray_r.rect.center(),
-                                egui::vec2(ICON_SZ, ICON_SZ),
-                            );
-                            ui.painter().image(
-                                t.id(),
-                                r,
-                                egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                ),
-                                ui.visuals().text_color(),
-                            );
-                        } else {
-                            let galley = ui.painter().layout_no_wrap(
-                                "▢".to_string(),
-                                egui::FontId::new(14.0, egui::FontFamily::Proportional),
-                                ui.visuals().text_color(),
-                            );
-                            ui.painter().galley(
-                                tray_r.rect.center() - galley.size() / 2.0,
-                                galley,
-                                ui.visuals().text_color(),
-                            );
-                        }
-                        if tray_r.clicked() {
-                            self.pending_hide_to_tray = true;
-                        }
-                        if tray_r.hovered() {
-                            ui.ctx()
-                                .output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                            if webview_active {
-                                ui.label(
-                                    egui::RichText::new("Minimize to tray")
-                                        .size(12.0)
-                                        .color(ui.visuals().weak_text_color()),
-                                );
-                            } else {
-                                egui::containers::Tooltip::for_enabled(&tray_r)
-                                    .show(|ui| ui.label("Minimize to tray"));
-                            }
                         }
                     }
                     let rest = ui.available_width();
@@ -2132,154 +1993,6 @@ impl SpectreApp {
         ctx.request_repaint_after(Duration::from_millis(250));
         #[cfg(windows)]
         let frame_ref = frame_opt.as_deref();
-        #[cfg(windows)]
-        {
-            use std::sync::atomic::Ordering;
-            if MINIMIZE_TO_TRAY_REQUESTED.swap(false, Ordering::SeqCst) {
-                self.pending_hide_to_tray = true;
-            }
-            if !self.background_timer_set {
-                if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
-                    use windows::Win32::UI::WindowsAndMessaging::SetTimer;
-                    if unsafe { SetTimer(hwnd, 1, 500, None) } != 0 {
-                        self.background_timer_set = true;
-                    }
-                }
-            }
-            if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
-                if !self.tray_subclass_done {
-                    use windows::Win32::UI::WindowsAndMessaging::{
-                        GWLP_WNDPROC, SetWindowLongPtrW,
-                    };
-                    let prev = unsafe {
-                        SetWindowLongPtrW(
-                            hwnd,
-                            GWLP_WNDPROC,
-                            tray_minimize_wndproc as *const () as isize,
-                        )
-                    };
-                    if prev != 0 {
-                        unsafe { TRAY_ORIGINAL_WNDPROC = prev };
-                        self.tray_subclass_done = true;
-                    }
-                }
-            }
-            if self.pending_hide_to_tray {
-                if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
-                    use windows::Win32::Foundation::RECT;
-                    use windows::Win32::UI::WindowsAndMessaging::{
-                        GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
-                        GWL_EXSTYLE, ShowWindow, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE,
-                        SW_HIDE, WS_EX_TOOLWINDOW,
-                    };
-                    let mut rect = RECT::default();
-                    if unsafe { GetWindowRect(hwnd, &mut rect).is_ok() } {
-                        let x = rect.left;
-                        let y = rect.top;
-                        let w = rect.right - rect.left;
-                        let h = rect.bottom - rect.top;
-                        self.saved_tray_rect = Some((x, y, w, h));
-                        let ex = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
-                        let _ = unsafe {
-                            SetWindowLongW(hwnd, GWL_EXSTYLE, ex | (WS_EX_TOOLWINDOW.0 as i32))
-                        };
-                        let _ = unsafe {
-                            SetWindowPos(
-                                hwnd,
-                                windows::Win32::Foundation::HWND::default(),
-                                0,
-                                0,
-                                0,
-                                0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
-                            )
-                        };
-                        let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
-                        self.window_hidden_to_tray = true;
-                    }
-                }
-                self.pending_hide_to_tray = false;
-            }
-            if self.window_hidden_to_tray {
-                ctx.request_repaint_after(std::time::Duration::from_millis(500));
-            }
-            if self.splash_screen.is_none() && self.tray_icon.is_none() {
-                if let Some(icon) = load_tray_icon() {
-                    use tray_icon::menu::{Menu, MenuItem};
-                    let show_item = MenuItem::with_id("show", "Show Spectre", true, None);
-                    let show_id = show_item.id().clone();
-                    let quit_item = MenuItem::with_id("quit", "Exit", true, None);
-                    let quit_id = quit_item.id().clone();
-                    let menu = Menu::new();
-                    let _ = menu.append(&show_item);
-                    let _ = menu.append(&quit_item);
-                    match tray_icon::TrayIconBuilder::new()
-                        .with_menu(Box::new(menu))
-                        .with_tooltip("Spectre - HD2 toolkit")
-                        .with_icon(icon)
-                        .build()
-                    {
-                        Ok(tray) => {
-                            self.tray_icon = Some(tray);
-                            self.tray_show_id = Some(show_id);
-                            self.tray_quit_id = Some(quit_id);
-                        }
-                        Err(e) => println!("[Tray] Failed to create tray icon: {}", e),
-                    }
-                }
-            }
-            while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-                let is_show = self
-                    .tray_show_id
-                    .as_ref()
-                    .is_some_and(|show_id| event.id.as_ref() == show_id.as_ref());
-                if is_show {
-                    self.window_hidden_to_tray = false;
-                    if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
-                        use windows::Win32::UI::WindowsAndMessaging::{
-                            GetWindowLongW, SetForegroundWindow, SetWindowLongW, SetWindowPos,
-                            ShowWindow, GWL_EXSTYLE, HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-                            SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WS_EX_TOOLWINDOW,
-                        };
-                        if let Some((x, y, w, h)) = self.saved_tray_rect.take() {
-                            let _ = unsafe {
-                                SetWindowPos(
-                                    hwnd,
-                                    HWND_TOP,
-                                    x,
-                                    y,
-                                    w,
-                                    h,
-                                    SWP_NOACTIVATE | SWP_FRAMECHANGED,
-                                )
-                            };
-                        }
-                        let ex = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
-                        let _ = unsafe {
-                            SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TOOLWINDOW.0 as i32))
-                        };
-                        let _ = unsafe {
-                            SetWindowPos(
-                                hwnd,
-                                windows::Win32::Foundation::HWND::default(),
-                                0,
-                                0,
-                                0,
-                                0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
-                            )
-                        };
-                        let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
-                        let _ = unsafe { SetForegroundWindow(hwnd) };
-                    }
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.request_repaint();
-                } else {
-                    // Exit: custom "quit" item or any other menu click (only Show and Exit in tray)
-                    std::process::exit(0);
-                }
-            }
-        }
 
         if ctx.data_mut(|d| {
             d.get_temp::<()>(egui::Id::new("spectre_open_web_after_wizard"))
@@ -2930,7 +2643,7 @@ impl SpectreApp {
                             send_asay_all("Restarting now.");
                             self.restart_scheduled_at = None;
                             self.restart_announce_stage = None;
-                            let to_kill: Vec<(u16, u32)> = pids_copy;
+                            let to_kill: Vec<(u16, u32)> = pids_copy.clone();
                             if let Ok(mut pids) = self.server_pids.lock() {
                                 for (port, _) in &to_kill {
                                     pids.remove(port);
@@ -2986,7 +2699,8 @@ impl SpectreApp {
                                 self.restart_announce_stage = Some(1);
                             }
                         }
-                    } else if data.server_manager.use_global_announcements
+                    }
+                    if data.server_manager.use_global_announcements
                         && data.server_manager.enable_automated_announcements
                         && !data.server_manager.automated_announcements.is_empty()
                     {
