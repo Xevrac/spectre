@@ -17,7 +17,7 @@
         configs: [
           {
             name: 'Default',
-            domain: 'local',
+            domain: 'Internet',
             session_name: 'A Spectre Session',
             style: 'Objectives',
             max_clients: 32,
@@ -39,6 +39,7 @@
             respawn_number: 0,
             team_respawn: true,
             password: '',
+            admin_username: '',
             admin_pass: '',
             max_ping: 0,
             max_freq: 50,
@@ -55,10 +56,12 @@
     selectedServerIndex: 0,
     selectedConfigIndex: 0,
     selectedLogServerIndex: 0,
-    activeTab: 'console',
+    activeTab: 'dashboard',
     serverStarting: false,
     serverError: false,
     playerCount: { active: '--', total: '--' },
+    playerCountByServer: {},
+    currentPlayerListByServer: {},
     currentPlayerList: [],
     playerListRevealed: {},
     server_manager: {
@@ -76,9 +79,12 @@
   };
 
   // Cache of last player list payload to avoid unnecessary re-renders while a server is running.
-  // This helps keep click interactions on the players table responsive even when IPC is polling.
-  let lastPlayerListJson = null;
-  // Track whether we currently have a running player poll interval attached.
+  let lastPlayerListJsonByPort = {};
+  // Round-robin poll: which server index the next PLAYERS response is for (null = selected-server request).
+  let pendingPlayerRequestIndex = null;
+  // Indices of running servers for round-robin; current position.
+  let runningServerIndices = [];
+  let playerPollRoundIndex = 0;
   let lastPlayerPollRunning = false;
 
   function ipcLog(msg, detail) {
@@ -140,6 +146,28 @@
       state.selectedConfigIndex = 0;
       render();
     };
+  }
+
+  function renderDashboard() {
+    const tbody = document.getElementById('dashboard-tbody');
+    if (!tbody) return;
+    if (!state.servers || state.servers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-hint">No servers. Add a server in Settings.</td></tr>';
+      return;
+    }
+    var byPort = state.playerCountByServer || {};
+    tbody.innerHTML = state.servers.map(function (s, i) {
+      var status = 'stopped';
+      if (state.serverError && i === state.selectedServerIndex) status = 'error';
+      else if (state.serverStarting && i === state.selectedServerIndex) status = 'starting';
+      else if (s.running) status = 'online';
+      var statusText = status === 'online' ? 'Online' : status === 'starting' ? 'Starting' : status === 'error' ? 'Error' : 'Stopped';
+      var pc = byPort[s.port];
+      var playersStr = pc ? (pc.active + ' / ' + pc.total) : '-- / --';
+      var name = s.name || ('Server ' + (i + 1));
+      var profile = s.current_config || (s.configs && s.configs[0] ? s.configs[0].name : '—');
+      return '<tr><td><span class="server-status-dot status-' + status + '" aria-hidden="true"></span><span class="dashboard-status-text">' + escapeHtml(statusText) + '</span></td><td>' + escapeHtml(name) + '</td><td>' + escapeHtml(profile) + '</td><td class="dashboard-players">' + escapeHtml(playersStr) + '</td></tr>';
+    }).join('');
   }
 
   function renderLogsServerTabs() {
@@ -222,32 +250,58 @@
     set('session-name', c.session_name);
     set('style-select', c.style);
     if (c.domain === 'LAN') c.domain = 'local';
-    const domain = (c.domain === 'local' || c.domain === 'Internet') ? c.domain : 'local';
+    const domain = (c.domain === 'local' || c.domain === 'Internet') ? c.domain : 'Internet';
     const domainEl = document.getElementById('domain-' + domain.toLowerCase());
     if (domainEl) domainEl.checked = true;
-    const isCoop = c.style === 'Cooperative';
+    const style = c.style || 'Occupation';
+    const isCoop = style === 'Cooperative';
+    const isDM = style === 'Deathmatch';
+    const isObj = style === 'Objectives';
+    const isOcc = style === 'Occupation';
     const maxClientsCap = isCoop ? 6 : 32;
     set('max-clients', Math.min(Math.max(c.max_clients || 32, 1), maxClientsCap));
     var maxClientsEl = document.getElementById('max-clients');
     if (maxClientsEl) maxClientsEl.max = String(maxClientsCap);
-    set('point-limit', c.point_limit);
+    var pointLimitLocked = isCoop || isObj;
+    set('point-limit', pointLimitLocked ? 0 : c.point_limit);
+    var pointLimitEl = document.getElementById('point-limit');
+    if (pointLimitEl) pointLimitEl.disabled = pointLimitLocked;
     set('round-limit', c.round_limit);
     set('round-count', c.round_count != null ? c.round_count : 1);
     set('respawn-time', c.respawn_time);
     set('spawn-protection', c.spawn_protection != null ? c.spawn_protection : 0);
     set('warmup', c.warmup != null ? c.warmup : 10);
-    set('inverse-damage', c.inverse_damage != null ? c.inverse_damage : 0);
-    setCheck('friendly-fire', c.friendly_fire);
-    setCheck('auto-team-balance', c.auto_team_balance != null ? c.auto_team_balance : true);
+    var inverseLocked = isDM;
+    set('inverse-damage', inverseLocked ? 100 : (c.inverse_damage != null ? c.inverse_damage : 100));
+    var inverseEl = document.getElementById('inverse-damage');
+    if (inverseEl) inverseEl.disabled = inverseLocked;
+    var ffLocked = isDM;
+    setCheck('friendly-fire', ffLocked ? false : c.friendly_fire);
+    var ffEl = document.getElementById('friendly-fire');
+    if (ffEl) ffEl.disabled = ffLocked;
+    var atbLocked = isCoop || isDM;
+    setCheck('auto-team-balance', atbLocked ? false : (c.auto_team_balance != null ? c.auto_team_balance : true));
+    var atbEl = document.getElementById('auto-team-balance');
+    if (atbEl) atbEl.disabled = atbLocked;
+    var arLocked = isCoop || isDM || isOcc;
+    setCheck('allow-respawn', arLocked ? true : (c.allow_respawn != null ? c.allow_respawn : false));
+    var arEl = document.getElementById('allow-respawn');
+    if (arEl) arEl.disabled = arLocked;
     setCheck('third-person-view', c.third_person_view);
     setCheck('allow-crosshair', c.allow_crosshair != null ? c.allow_crosshair : true);
     setCheck('falling-dmg', c.falling_dmg != null ? c.falling_dmg : true);
-    setCheck('allow-respawn', c.allow_respawn != null ? c.allow_respawn : false);
     setCheck('allow-vehicles', c.allow_vehicles != null ? c.allow_vehicles : true);
     set('difficulty', c.difficulty);
     set('respawn-number', c.respawn_number != null ? c.respawn_number : 0);
     setCheck('team-respawn', c.team_respawn != null ? c.team_respawn : true);
+    var coopPanel = document.getElementById('coop-panel');
+    if (coopPanel) {
+      coopPanel.classList.toggle('panel-disabled', !isCoop);
+      var coopInputs = coopPanel.querySelectorAll('input, select');
+      coopInputs.forEach(function (el) { el.disabled = !isCoop; });
+    }
     set('password', c.password);
+    set('admin-username', c.admin_username != null ? c.admin_username : '');
     set('admin-pass', c.admin_pass);
     set('max-ping', c.max_ping);
     set('max-freq', c.max_freq != null ? c.max_freq : 50);
@@ -294,10 +348,15 @@
     c.session_name = get('session-name');
     c.style = get('style-select');
     const domainRadio = document.querySelector('input[name="domain-type"]:checked');
-    c.domain = domainRadio ? domainRadio.value : 'local';
+    c.domain = domainRadio ? domainRadio.value : 'Internet';
     var rawMax = Math.min(Math.max(parseInt(get('max-clients'), 10) || 32, 1), 32);
     c.max_clients = c.style === 'Cooperative' ? Math.min(rawMax, 6) : rawMax;
-    c.point_limit = parseInt(get('point-limit'), 10) || 0;
+    var style = c.style || 'Occupation';
+    var isCoop = style === 'Cooperative';
+    var isDM = style === 'Deathmatch';
+    var isObj = style === 'Objectives';
+    var isOcc = style === 'Occupation';
+    c.point_limit = (isCoop || isObj) ? 0 : (parseInt(get('point-limit'), 10) || 0);
     c.round_limit = parseInt(get('round-limit'), 10) || 5;
     c.round_count = parseInt(get('round-count'), 10);
     if (isNaN(c.round_count) || c.round_count < 1) c.round_count = 1;
@@ -307,15 +366,15 @@
     if (c.spawn_protection > 30) c.spawn_protection = 30;
     c.warmup = parseInt(get('warmup'), 10) || 0;
     if (c.warmup > 60) c.warmup = 60;
-    c.inverse_damage = parseInt(get('inverse-damage'), 10);
+    c.inverse_damage = isDM ? 100 : (parseInt(get('inverse-damage'), 10));
     if (isNaN(c.inverse_damage)) c.inverse_damage = 100;
     if (c.inverse_damage > 200) c.inverse_damage = 200;
-    c.friendly_fire = getCheck('friendly-fire');
-    c.auto_team_balance = getCheck('auto-team-balance');
+    c.friendly_fire = isDM ? false : getCheck('friendly-fire');
+    c.auto_team_balance = (isCoop || isDM) ? false : getCheck('auto-team-balance');
+    c.allow_respawn = (isCoop || isDM || isOcc) ? true : getCheck('allow-respawn');
     c.third_person_view = getCheck('third-person-view');
     c.allow_crosshair = getCheck('allow-crosshair');
     c.falling_dmg = getCheck('falling-dmg');
-    c.allow_respawn = getCheck('allow-respawn');
     c.allow_vehicles = getCheck('allow-vehicles');
     c.difficulty = get('difficulty');
     c.respawn_number = parseInt(get('respawn-number'), 10);
@@ -323,6 +382,7 @@
     if (c.respawn_number > 99) c.respawn_number = 99;
     c.team_respawn = getCheck('team-respawn');
     c.password = get('password');
+    c.admin_username = get('admin-username') || '';
     c.admin_pass = get('admin-pass');
     c.max_ping = parseInt(get('max-ping'), 10) || 0;
     c.max_freq = parseInt(get('max-freq'), 10);
@@ -476,8 +536,8 @@
     const c = getSelectedConfig();
     const style = c ? (c.style || 'Occupation') : 'Occupation';
     const byStyle = getAvailableMapsForServer();
-    let arr = byStyle[style];
-    if (!Array.isArray(arr) || arr.length === 0) {
+    let arr = Array.isArray(byStyle[style]) ? byStyle[style] : [];
+    if (!arr.length) {
       if (style === 'Deathmatch') arr = byStyle['Occupation'];
       else if (style === 'Objectives') arr = byStyle['Objectives'];
     }
@@ -629,6 +689,7 @@
     renderServerSelect();
     renderProfileList();
     renderLogsServerTabs();
+    renderDashboard();
     renderTabs();
     bindFormToConfig();
     renderAvailableMapList();
@@ -636,6 +697,9 @@
     renderBanList();
     renderWhitelist();
     renderAutomatedAnnouncementsList();
+    if (s && state.currentPlayerListByServer) {
+      state.currentPlayerList = state.currentPlayerListByServer[s.port] || [];
+    }
     renderCurrentPlayersTable();
     const gameSelect = document.getElementById('game-select');
     if (gameSelect && s) gameSelect.value = s.use_sabre_squadron ? 'sabre' : 'hd2';
@@ -669,6 +733,9 @@
         startAllBtn.className = runCount > 0 ? 'btn btn-sm btn-stop' : 'btn btn-sm';
       }
     }
+    if (s && state.playerCountByServer && state.playerCountByServer[s.port]) {
+      state.playerCount = state.playerCountByServer[s.port];
+    }
     var statusDot = document.getElementById('server-status-dot');
     var statusText = document.getElementById('server-status-text');
     var playersEl = document.getElementById('server-status-players');
@@ -697,36 +764,46 @@
       playersEl.textContent = '-- / --';
     }
 
-    // Manage player polling interval only when the running state changes,
-    // instead of on every render, to avoid flooding IPC and starving UI events.
-    var isRunningFlag = !!(s && s.running);
+    // Round-robin poll all running servers so Dashboard and sidebar get player counts for each.
+    var runCount = countRunning();
     if (typeof window.ipc !== 'undefined' && window.ipc.postMessage) {
-      if (isRunningFlag && !lastPlayerPollRunning) {
-        function requestPlayers() {
-          try {
-            window.ipc.postMessage(JSON.stringify({
-              action: 'get_players',
-              server_index: state.selectedServerIndex,
-              servers: state.servers
-            }));
-          } catch (e) {}
-        }
-        requestPlayers();
-        window._playerPollTimer = setInterval(requestPlayers, 2000);
+      if (runCount > 0 && !lastPlayerPollRunning) {
+        runningServerIndices = state.servers.map(function (_, i) { return i; }).filter(function (i) { return state.servers[i].running; });
+        playerPollRoundIndex = 0;
         lastPlayerPollRunning = true;
-      } else if (!isRunningFlag && lastPlayerPollRunning) {
+        window._scheduleNextPlayerPoll = function (fromResponse) {
+          runningServerIndices = state.servers.map(function (_, i) { return i; }).filter(function (i) { return state.servers[i].running; });
+          if (runningServerIndices.length === 0) {
+            lastPlayerPollRunning = false;
+            return;
+          }
+          if (fromResponse) playerPollRoundIndex++;
+          if (playerPollRoundIndex >= runningServerIndices.length) playerPollRoundIndex = 0;
+          if (fromResponse && playerPollRoundIndex === 0) {
+            window._playerPollTimer = setTimeout(function () { window._scheduleNextPlayerPoll(false); }, 2000);
+            return;
+          }
+          var idx = runningServerIndices[playerPollRoundIndex];
+          pendingPlayerRequestIndex = idx;
+          try {
+            window.ipc.postMessage(JSON.stringify({ action: 'get_players', server_index: idx, servers: state.servers }));
+          } catch (e) {}
+        };
+        window._scheduleNextPlayerPoll(false);
+      } else if (runCount === 0 && lastPlayerPollRunning) {
         if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
-          clearInterval(window._playerPollTimer);
+          clearTimeout(window._playerPollTimer);
           window._playerPollTimer = null;
         }
+        pendingPlayerRequestIndex = null;
         lastPlayerPollRunning = false;
       }
     } else {
-      // No IPC – ensure no stray interval is left running.
       if (typeof window._playerPollTimer !== 'undefined' && window._playerPollTimer !== null) {
-        clearInterval(window._playerPollTimer);
+        clearTimeout(window._playerPollTimer);
         window._playerPollTimer = null;
       }
+      pendingPlayerRequestIndex = null;
       lastPlayerPollRunning = false;
     }
   }
@@ -763,7 +840,7 @@
     ipcLog('Profile New clicked', s ? 'server=' + s.name : 'no server');
     if (s) {
       const last = s.configs[s.configs.length - 1];
-      const base = last ? { ...last } : { name: 'New profile', domain: 'local', session_name: 'A Spectre Session', style: 'Objectives', max_clients: 32, point_limit: 0, round_limit: 5, round_count: 3, respawn_time: 3, spawn_protection: 5, warmup: 10, inverse_damage: 100, friendly_fire: true, auto_team_balance: true, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: false, allow_vehicles: true, difficulty: 'Hard', respawn_number: 0, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 50, max_inactivity: 0, voice_chat: 0, maps: ['Alps3'] };
+      const base = last ? { ...last } : { name: 'New profile', domain: 'Internet', session_name: 'A Spectre Session', style: 'Objectives', max_clients: 32, point_limit: 0, round_limit: 5, round_count: 3, respawn_time: 3, spawn_protection: 5, warmup: 10, inverse_damage: 100, friendly_fire: true, auto_team_balance: true, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: false, allow_vehicles: true, difficulty: 'Hard', respawn_number: 0, team_respawn: true, password: '', admin_username: '', admin_pass: '', max_ping: 0, max_freq: 50, max_inactivity: 0, voice_chat: 0, maps: ['Alps3'] };
       s.configs.push({
         ...base,
         name: 'New profile',
@@ -833,7 +910,7 @@
       mpmaplist_path: '',
       current_config: 'Default',
         configs: [
-        { name: 'Default', domain: 'local', session_name: 'A Spectre Session', style: 'Objectives', max_clients: 32, point_limit: 0, round_limit: 5, round_count: 3, respawn_time: 3, spawn_protection: 5, warmup: 10, inverse_damage: 100, friendly_fire: true, auto_team_balance: true, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: false, allow_vehicles: true, difficulty: 'Hard', respawn_number: 0, team_respawn: true, password: '', admin_pass: '', max_ping: 0, max_freq: 50, max_inactivity: 0, voice_chat: 0, maps: ['Alps3'], ban_list: [], enable_whitelist: false, whitelist: [] }
+        { name: 'Default', domain: 'Internet', session_name: 'A Spectre Session', style: 'Objectives', max_clients: 32, point_limit: 0, round_limit: 5, round_count: 3, respawn_time: 3, spawn_protection: 5, warmup: 10, inverse_damage: 100, friendly_fire: true, auto_team_balance: true, third_person_view: false, allow_crosshair: true, falling_dmg: true, allow_respawn: false, allow_vehicles: true, difficulty: 'Hard', respawn_number: 0, team_respawn: true, password: '', admin_username: '', admin_pass: '', max_ping: 0, max_freq: 50, max_inactivity: 0, voice_chat: 0, maps: ['Alps3'], ban_list: [], enable_whitelist: false, whitelist: [] }
       ]
     };
     state.servers.push(newServer);
@@ -1067,7 +1144,7 @@
     var s = getSelectedServer();
     if (s && s.configs) {
       var domainRadio = document.querySelector('input[name="domain-type"]:checked');
-      var domainVal = domainRadio ? domainRadio.value : 'local';
+      var domainVal = domainRadio ? domainRadio.value : 'Internet';
       var cur = s.configs.find(function (c) { return c && c.name === s.current_config; });
       if (cur) cur.domain = domainVal;
     }
@@ -1417,8 +1494,23 @@
     bindConfigToForm();
     const c = getSelectedConfig();
     if (c) {
-      if (c.style === 'Cooperative' && c.max_clients > 6) c.max_clients = 6;
       c.maps = [];
+      var s = c.style || 'Occupation';
+      if (s === 'Cooperative') {
+        if (c.max_clients > 6) c.max_clients = 6;
+        c.point_limit = 0;
+        c.auto_team_balance = false;
+        c.allow_respawn = true;
+      } else if (s === 'Deathmatch') {
+        c.friendly_fire = false;
+        c.auto_team_balance = false;
+        c.allow_respawn = true;
+        c.inverse_damage = 100;
+      } else if (s === 'Objectives') {
+        c.point_limit = 0;
+      } else if (s === 'Occupation') {
+        c.allow_respawn = true;
+      }
     }
     setUnsaved(true);
     render();
@@ -1531,17 +1623,42 @@
       var part = msg.slice(8);
       var parts = part.split(',');
       if (parts.length >= 2) {
-        state.playerCount = { active: parts[0].trim(), total: parts[1].trim() };
+        var pc = { active: parts[0].trim(), total: parts[1].trim() };
+        var targetIndex = pendingPlayerRequestIndex;
+        if (targetIndex != null && state.servers[targetIndex]) {
+          state.playerCountByServer = state.playerCountByServer || {};
+          state.playerCountByServer[state.servers[targetIndex].port] = pc;
+          if (targetIndex === state.selectedServerIndex) state.playerCount = pc;
+          state._lastPlayerListServerIndex = targetIndex;
+          pendingPlayerRequestIndex = null;
+          if (typeof window._scheduleNextPlayerPoll === 'function') window._scheduleNextPlayerPoll(true);
+        } else {
+          var sel = state.servers[state.selectedServerIndex];
+          state.playerCount = pc;
+          if (sel) {
+            state.playerCountByServer = state.playerCountByServer || {};
+            state.playerCountByServer[sel.port] = pc;
+          }
+        }
         requestRender();
       }
     } else if (msg && msg.startsWith('PLAYER_LIST:')) {
       try {
         var json = msg.slice(12);
-        // If the player list hasn't changed since last time, skip updating state/rendering.
-        if (json === lastPlayerListJson) return;
-        lastPlayerListJson = json;
+        var listForIndex = state._lastPlayerListServerIndex;
+        var port = listForIndex != null && state.servers[listForIndex] ? state.servers[listForIndex].port : null;
+        if (port != null && lastPlayerListJsonByPort[port] === json) return;
+        if (port != null) lastPlayerListJsonByPort[port] = json;
         var list = JSON.parse(json);
-        state.currentPlayerList = Array.isArray(list) ? list : [];
+        var arr = Array.isArray(list) ? list : [];
+        state.currentPlayerListByServer = state.currentPlayerListByServer || {};
+        if (listForIndex != null && state.servers[listForIndex]) {
+          state.currentPlayerListByServer[state.servers[listForIndex].port] = arr;
+        }
+        if (listForIndex === state.selectedServerIndex) state.currentPlayerList = arr;
+        else if (state.servers[state.selectedServerIndex]) {
+          state.currentPlayerList = state.currentPlayerListByServer[state.servers[state.selectedServerIndex].port] || [];
+        }
         requestRender();
       } catch (e) {
         state.currentPlayerList = [];
@@ -1613,5 +1730,8 @@
   });
   render();
   if (state.activeTab === 'logs') requestLogContent();
+  setInterval(function () {
+    if (state.activeTab === 'logs') requestLogContent();
+  }, 4000);
   ipcLog('Ready');
 })();

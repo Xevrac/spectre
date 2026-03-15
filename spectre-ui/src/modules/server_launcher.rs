@@ -167,7 +167,7 @@ impl ServerLauncher {
         const WIZARD_WIDTH: f32 = 520.0;
         const WIZARD_HEIGHT: f32 = 420.0;
 
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let center_x = screen.center().x - WIZARD_WIDTH / 2.0;
         let center_y = screen.center().y - WIZARD_HEIGHT / 2.0;
 

@@ -1,5 +1,6 @@
 use eframe::egui;
 
+#[allow(dead_code)]
 pub struct DialogBuilder {
     title: String,
     width_ratio: f32,
@@ -34,6 +35,7 @@ impl Default for DialogBuilder {
     }
 }
 
+#[allow(dead_code)]
 impl DialogBuilder {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
@@ -113,7 +115,7 @@ impl DialogBuilder {
             if let Some(rect) = i.viewport().inner_rect {
                 egui::Vec2::new(rect.width(), rect.height())
             } else {
-                ctx.screen_rect().size()
+                ctx.content_rect().size()
             }
         });
 
@@ -172,7 +174,7 @@ impl DialogBuilder {
                         };
 
                         egui::ScrollArea::vertical()
-                            .id_source(format!("dialog_scroll_{}", self.title))
+                            .id_salt(format!("dialog_scroll_{}", self.title))
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
@@ -193,6 +195,7 @@ impl DialogBuilder {
     }
 }
 
+#[allow(dead_code)]
 pub struct DialogContext {
     pub content_width: f32,
     pub scroll_height: f32,

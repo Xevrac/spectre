@@ -126,6 +126,7 @@ pub(crate) fn send_command_to_ds_no_focus(hwnd: windows::Win32::Foundation::HWND
 
 /// Types a command into the DS console window (PostMessage WM_CHAR + Enter).
 /// Steals focus briefly; use only when user-initiated. Prefer send_command_to_ds_no_focus for automation.
+#[allow(dead_code)]
 pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str) {
     let _ = unsafe { SetForegroundWindow(hwnd) };
     std::thread::sleep(std::time::Duration::from_millis(120));
@@ -290,6 +291,9 @@ pub fn enforce_player_lists(
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
 
+    let current_set: HashSet<(String, String)> =
+        current_connected.iter().cloned().collect();
+
     for (name, ip) in &current_connected {
         if !previous_set.contains(&(name.clone(), ip.clone())) {
             let msg = format!("[DS-Helper] player joined: \"{}\" ({})", name, ip);
@@ -297,6 +301,18 @@ pub fn enforce_player_lists(
             let _ = std::io::stdout().flush();
             if let Some(log) = log_line {
                 log(&msg);
+            }
+        }
+    }
+    if previous_slots.is_some() {
+        for (name, ip) in &previous_set {
+            if !current_set.contains(&(name.clone(), ip.clone())) {
+                let msg = format!("[DS-Helper] player left: \"{}\" ({})", name, ip);
+                println!("{}", msg);
+                let _ = std::io::stdout().flush();
+                if let Some(log) = log_line {
+                    log(&msg);
+                }
             }
         }
     }

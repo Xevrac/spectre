@@ -84,7 +84,7 @@ impl SplashScreen {
         egui::Area::new(egui::Id::new("splash_area"))
             .interactable(false)
             .show(ctx, |ui| {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 let painter = ui.painter();
 
                 painter.rect_filled(screen_rect, 0.0, egui::Color32::BLACK);

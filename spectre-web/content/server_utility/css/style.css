@@ -526,6 +526,11 @@ body {
   margin-bottom: 16px;
 }
 
+.panel-card.panel-disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 .panel-heading {
   margin: 0 0 12px 0;
   font-size: 1rem;
@@ -570,6 +575,10 @@ body {
 
 .form-grid .form-row-full {
   grid-column: 1 / -1;
+}
+
+.form-row-label-nowrap label {
+  white-space: nowrap;
 }
 
 .form-grid .form-row-with-notice {
@@ -925,6 +934,44 @@ body {
 
 .map-list.list-single {
   max-height: 200px;
+}
+
+.dashboard-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+}
+.dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.dashboard-table th,
+.dashboard-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.dashboard-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--input-bg);
+}
+.dashboard-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.dashboard-table td:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dashboard-table .dashboard-status-text {
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-table .dashboard-players {
+  font-variant-numeric: tabular-nums;
 }
 
 .players-table-wrap {

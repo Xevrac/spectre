@@ -106,6 +106,7 @@ pub struct ServerUtilityHttpState {
     pub config_path: PathBuf,
     pub server_pids: Arc<std::sync::Mutex<HashMap<u16, u32>>>,
     pub shared_config: Option<Arc<std::sync::Mutex<crate::config::Config>>>,
+    #[allow(dead_code)]
     pub log_state: Option<Arc<std::sync::Mutex<(PathBuf, u32)>>>,
     pub helper_kicked: Option<Arc<std::sync::Mutex<HashMap<u16, HashSet<String>>>>>,
     pub helper_last_slots: Option<Arc<std::sync::Mutex<HashMap<u16, Vec<(String, String)>>>>>,
@@ -524,6 +525,7 @@ struct IpcSaveMessage {
     #[serde(default)]
     server_manager: Option<spectre_core::server::ServerManager>,
     #[serde(default)]
+    #[allow(dead_code)]
     browse_which: Option<String>,
 }
 

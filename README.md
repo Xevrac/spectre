@@ -12,8 +12,18 @@ Spectre is a work in progress toolkit for Hidden &amp; Dangerous 2.
 
 # Features
 ## Tools
-- Server Utility 🏗️
-   - Inspired by Server Manager
+### Server Utility
+A single place to configure, run and monitor HD2 and Sabre Squadron dedicated servers. Inspired by Server Manager.
+
+- **Server & profiles** — Add multiple servers (ports), each with config profiles (session name, style, game rules, map rotation). Switch between HD2 and Sabre Squadron per server.
+- **Players** — See who’s connected, ban by IP (with optional in-game reason), and manage a whitelist.
+- **Watchdog** — Restart crashed servers automatically; optionally restart all servers on a schedule (e.g. every N days). When scheduled restart is enabled, in-game countdown messages (T-5min, T-1min, T-10s, restarting now) can be sent before the restart.
+- **Automated announcements** — Broadcast messages in-game at a set interval. Use one shared list for all servers or a separate list per server. Messages are sent via `asay` (43-character limit).
+- **Logs** — View daemon and Spectre events per server.
+- **Settings** — Session/game options, coop settings, passwords, and log rotation. Config is saved to JSON and survives restarts.
+
+Requires Spectre to be running for watchdog and automated features. One local server can run at a time per Spectre instance.
+
 - DTA Unpacker (Planned)
 
 ## Editors

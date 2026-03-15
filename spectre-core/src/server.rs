@@ -67,6 +67,8 @@ pub struct ServerConfig {
     pub respawn_number: i32,
     pub team_respawn: bool,
     pub password: String,
+    #[serde(default)]
+    pub admin_username: String,
     pub admin_pass: String,
     pub max_ping: u16,
     pub max_freq: u16,
@@ -141,7 +143,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
-            domain: "local".to_string(),
+            domain: "Internet".to_string(),
             style: "Objectives".to_string(),
             session_name: "A Spectre Session".to_string(),
             max_clients: 32,
@@ -163,6 +165,7 @@ impl Default for ServerConfig {
             respawn_number: 0,
             team_respawn: true,
             password: String::new(),
+            admin_username: String::new(),
             admin_pass: String::new(),
             max_ping: 0,
             max_freq: 50,

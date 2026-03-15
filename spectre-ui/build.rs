@@ -1,5 +1,8 @@
 fn main() {
-    increment_version();
+    // Only auto-increment version in dev builds
+    if std::env::var("PROFILE").as_deref() == Ok("dev") {
+        increment_version();
+    }
     #[cfg(windows)]
     {
         embed_windows_icon();

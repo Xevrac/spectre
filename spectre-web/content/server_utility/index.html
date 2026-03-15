@@ -82,16 +82,38 @@
 
     <main class="content">
       <div class="tabs" role="tablist">
-        <button type="button" class="tab" data-tab="console" role="tab" aria-selected="true">Console</button>
+        <button type="button" class="tab" data-tab="dashboard" role="tab" aria-selected="true">Dashboard</button>
+        <span class="tab-sep" aria-hidden="true"></span>
+        <button type="button" class="tab" data-tab="console" role="tab">Console</button>
+        <button type="button" class="tab" data-tab="maps" role="tab">General</button>
         <button type="button" class="tab" data-tab="players" role="tab">Players</button>
         <button type="button" class="tab" data-tab="logs" role="tab">Logs</button>
         <span class="tab-sep" aria-hidden="true"></span>
-        <button type="button" class="tab" data-tab="maps" role="tab">General</button>
         <button type="button" class="tab" data-tab="general" role="tab">Settings</button>
       </div>
 
       <div class="tab-panels">
-        <section class="tab-panel" id="panel-console" role="tabpanel">
+        <section class="tab-panel" id="panel-dashboard" role="tabpanel">
+          <div class="panel-card">
+            <h2 class="panel-heading">Servers</h2>
+            <p class="map-hint">Status of all servers. Profile is the active config for each server.</p>
+            <div class="dashboard-table-wrap">
+              <table class="dashboard-table" id="dashboard-table" aria-label="Server status">
+                <thead>
+                  <tr>
+                    <th scope="col">Status</th>
+                    <th scope="col">Server</th>
+                    <th scope="col">Profile</th>
+                    <th scope="col">Players</th>
+                  </tr>
+                </thead>
+                <tbody id="dashboard-tbody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+        <section class="tab-panel hidden" id="panel-console" role="tabpanel">
           <div class="panel-card">
             <p class="form-notice form-notice-info">Coming soon!</p>
           </div>
@@ -120,11 +142,11 @@
               <label>Domain</label>
               <div class="radio-group" role="radiogroup" aria-label="Domain type">
                 <label class="radio-label">
-                  <input type="radio" name="domain-type" value="local" id="domain-local" checked>
+                  <input type="radio" name="domain-type" value="local" id="domain-local">
                   Local
                 </label>
                 <label class="radio-label">
-                  <input type="radio" name="domain-type" value="Internet" id="domain-internet">
+                  <input type="radio" name="domain-type" value="Internet" id="domain-internet" checked>
                   Internet
                 </label>
               </div>
@@ -191,7 +213,7 @@
                 <input type="number" class="input input-num" id="point-limit" min="0" value="0">
               </div>
               <div class="form-row">
-                <label>Round limit</label>
+                <label>Round time limit (min)</label>
                 <input type="number" class="input input-num" id="round-limit" min="0" value="5">
               </div>
               <div class="form-row">
@@ -251,7 +273,7 @@
               </div>
             </div>
           </div>
-          <div class="panel-card">
+          <div class="panel-card" id="coop-panel">
             <h2 class="panel-heading">Coop</h2>
             <div class="form-grid">
               <div class="form-row">
@@ -263,7 +285,7 @@
                   <option value="Very hard">Very hard</option>
                 </select>
               </div>
-              <div class="form-row">
+              <div class="form-row form-row-label-nowrap">
                 <label>Respawn number (0 = no limit)</label>
                 <input type="number" class="input input-num" id="respawn-number" min="0" max="99" value="0">
               </div>
@@ -281,6 +303,10 @@
                 <div class="form-row">
                   <label>Password</label>
                   <input type="password" class="input" id="password" placeholder="Server password">
+                </div>
+                <div class="form-row">
+                  <label>Admin username</label>
+                  <input type="text" class="input" id="admin-username" placeholder="Admin username">
                 </div>
                 <div class="form-row">
                   <label>Admin password</label>

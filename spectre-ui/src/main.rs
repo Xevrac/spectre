@@ -28,6 +28,12 @@ const AUTHOR: &str = "Xevrac";
 const ABOUT: &str = "Spectre is a toolkit for Hidden & Dangerous 2, providing various editing and management tools for the game.";
 
 #[cfg(windows)]
+static MINIMIZE_TO_TRAY_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(windows)]
+static mut TRAY_ORIGINAL_WNDPROC: isize = 0;
+
+#[cfg(windows)]
 #[derive(serde::Deserialize)]
 struct IpcSaveMessage {
     action: String,
@@ -385,6 +391,29 @@ fn get_main_window_hwnd_opt(
     frame: Option<&eframe::Frame>,
 ) -> Option<windows::Win32::Foundation::HWND> {
     frame.and_then(get_main_window_hwnd)
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn tray_minimize_wndproc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use std::sync::atomic::Ordering;
+    use windows::Win32::UI::WindowsAndMessaging::{CallWindowProcW, DefWindowProcW, WNDPROC};
+    const WM_SYSCOMMAND: u32 = 0x0112;
+    const SC_MINIMIZE: u32 = 0xF020;
+    if msg == WM_SYSCOMMAND && wparam.0 as u32 == SC_MINIMIZE {
+        MINIMIZE_TO_TRAY_REQUESTED.store(true, Ordering::SeqCst);
+        return windows::Win32::Foundation::LRESULT(0);
+    }
+    let prev = TRAY_ORIGINAL_WNDPROC;
+    if prev == 0 {
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    }
+    let prev_proc: WNDPROC = std::mem::transmute(prev);
+    unsafe { CallWindowProcW(prev_proc, hwnd, msg, wparam, lparam) }
 }
 
 #[cfg(windows)]
@@ -960,7 +989,9 @@ struct SpectreApp {
     window_hidden_to_tray: bool,
     #[cfg(windows)]
     pending_hide_to_tray: bool,
-    /// When minimized to tray: (x, y, width, height) to restore. Window is moved off-screen instead of SW_HIDE so the event loop keeps running.
+    #[cfg(windows)]
+    tray_subclass_done: bool,
+    /// When minimized to tray: (x, y, width, height) to restore.
     #[cfg(windows)]
     saved_tray_rect: Option<(i32, i32, i32, i32)>,
     #[cfg(windows)]
@@ -1062,6 +1093,8 @@ impl SpectreApp {
             #[cfg(windows)]
             pending_hide_to_tray: false,
             #[cfg(windows)]
+            tray_subclass_done: false,
+            #[cfg(windows)]
             saved_tray_rect: None,
             #[cfg(windows)]
             helper_kicked: Arc::new(Mutex::new(HashMap::new())),
@@ -1105,7 +1138,7 @@ impl SpectreApp {
             egui::vec2(ui.available_width(), ACTION_BAR_HEIGHT),
             egui::Sense::hover(),
         );
-        ui.allocate_ui_at_rect(bar_rect, |ui| {
+        ui.scope_builder(egui::UiBuilder::default().max_rect(bar_rect), |ui| {
             ui.with_layout(
                 egui::Layout::left_to_right(egui::Align::Center).with_main_justify(false),
                 |ui| {
@@ -1156,12 +1189,8 @@ impl SpectreApp {
                                     .color(ui.visuals().weak_text_color()),
                             );
                         } else {
-                            egui::show_tooltip(
-                                ui.ctx(),
-                                ui.layer_id(),
-                                egui::Id::new("action_bar_home"),
-                                |ui| ui.label("Return to main screen"),
-                            );
+                            egui::containers::Tooltip::for_enabled(&home_r)
+                                .show(|ui| ui.label("Return to main screen"));
                         }
                     }
                     let set_r =
@@ -1208,12 +1237,8 @@ impl SpectreApp {
                                     .color(ui.visuals().weak_text_color()),
                             );
                         } else {
-                            egui::show_tooltip(
-                                ui.ctx(),
-                                ui.layer_id(),
-                                egui::Id::new("action_bar_settings"),
-                                |ui| ui.label("Settings"),
-                            );
+                            egui::containers::Tooltip::for_enabled(&set_r)
+                                .show(|ui| ui.label("Settings"));
                         }
                     }
                     let info_r =
@@ -1260,12 +1285,8 @@ impl SpectreApp {
                                     .color(ui.visuals().weak_text_color()),
                             );
                         } else {
-                            egui::show_tooltip(
-                                ui.ctx(),
-                                ui.layer_id(),
-                                egui::Id::new("action_bar_info"),
-                                |ui| ui.label("About"),
-                            );
+                            egui::containers::Tooltip::for_enabled(&info_r)
+                                .show(|ui| ui.label("About"));
                         }
                     }
                     #[cfg(windows)]
@@ -1317,12 +1338,8 @@ impl SpectreApp {
                                         .color(ui.visuals().weak_text_color()),
                                 );
                             } else {
-                                egui::show_tooltip(
-                                    ui.ctx(),
-                                    ui.layer_id(),
-                                    egui::Id::new("action_bar_tray"),
-                                    |ui| ui.label("Minimize to tray"),
-                                );
+                                egui::containers::Tooltip::for_enabled(&tray_r)
+                                    .show(|ui| ui.label("Minimize to tray"));
                             }
                         }
                     }
@@ -1353,12 +1370,12 @@ impl SpectreApp {
         let running = self.server_utility_http.is_some();
         let current_port = self.server_utility_http.as_ref().map(|h| h.port);
         let panel_fill = egui::Color32::from_gray(45);
-        let panel_rounding = egui::Rounding::same(4);
+        let panel_rounding = egui::CornerRadius::same(4);
         let left_margin = egui::Margin { left: 6, ..Default::default() };
 
         let full_rect = ui.available_rect_before_wrap();
         ui.allocate_ui(full_rect.size(), |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .inner_margin(left_margin)
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
@@ -1367,9 +1384,9 @@ impl SpectreApp {
                     ui.add_space(8.0);
 
                     ui.set_min_width(ui.available_width());
-                    egui::Frame::none()
+                    egui::Frame::NONE
                     .fill(panel_fill)
-                    .rounding(panel_rounding)
+                    .corner_radius(panel_rounding)
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1501,9 +1518,9 @@ impl SpectreApp {
                 let log_height = ui.available_height().max(280.0).min(500.0);
                 ui.set_min_width(ui.available_width());
                 ui.set_min_height(log_height);
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(panel_fill)
-                    .rounding(panel_rounding)
+                    .corner_radius(panel_rounding)
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.label("Log");
@@ -1696,12 +1713,8 @@ impl SpectreApp {
                                             ui.ctx().output_mut(|o| {
                                                 o.cursor_icon = egui::CursorIcon::PointingHand
                                             });
-                                            egui::show_tooltip(
-                                                ui.ctx(),
-                                                ui.layer_id(),
-                                                egui::Id::new("about_btn"),
-                                                |ui| ui.label("About"),
-                                            );
+                                            egui::containers::Tooltip::for_enabled(&about_response)
+                                                .show(|ui| ui.label("About"));
                                         }
                                         let settings_response = ui.allocate_response(
                                             egui::Vec2::new(36.0, 28.0),
@@ -1752,12 +1765,8 @@ impl SpectreApp {
                                             ui.ctx().output_mut(|o| {
                                                 o.cursor_icon = egui::CursorIcon::PointingHand
                                             });
-                                            egui::show_tooltip(
-                                                ui.ctx(),
-                                                ui.layer_id(),
-                                                egui::Id::new("settings_btn"),
-                                                |ui| ui.label("Settings"),
-                                            );
+                                            egui::containers::Tooltip::for_enabled(&settings_response)
+                                                .show(|ui| ui.label("Settings"));
                                         }
                                     },
                                 );
@@ -1911,7 +1920,7 @@ impl SpectreApp {
         let hover_state = is_hovered;
 
         let inner_rect = rect.shrink(12.0);
-        let inner = ui.allocate_ui_at_rect(inner_rect, |ui| {
+        let inner = ui.scope_builder(egui::UiBuilder::default().max_rect(inner_rect), |ui| {
             ui.set_width(card_width - 24.0);
             ui.set_height(card_height - 24.0);
 
@@ -2125,6 +2134,10 @@ impl SpectreApp {
         let frame_ref = frame_opt.as_deref();
         #[cfg(windows)]
         {
+            use std::sync::atomic::Ordering;
+            if MINIMIZE_TO_TRAY_REQUESTED.swap(false, Ordering::SeqCst) {
+                self.pending_hide_to_tray = true;
+            }
             if !self.background_timer_set {
                 if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
                     use windows::Win32::UI::WindowsAndMessaging::SetTimer;
@@ -2133,11 +2146,31 @@ impl SpectreApp {
                     }
                 }
             }
+            if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
+                if !self.tray_subclass_done {
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        GWLP_WNDPROC, SetWindowLongPtrW,
+                    };
+                    let prev = unsafe {
+                        SetWindowLongPtrW(
+                            hwnd,
+                            GWLP_WNDPROC,
+                            tray_minimize_wndproc as *const () as isize,
+                        )
+                    };
+                    if prev != 0 {
+                        unsafe { TRAY_ORIGINAL_WNDPROC = prev };
+                        self.tray_subclass_done = true;
+                    }
+                }
+            }
             if self.pending_hide_to_tray {
                 if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
                     use windows::Win32::Foundation::RECT;
                     use windows::Win32::UI::WindowsAndMessaging::{
-                        GetWindowRect, SetWindowPos, HWND_BOTTOM, SWP_NOACTIVATE,
+                        GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
+                        GWL_EXSTYLE, ShowWindow, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE,
+                        SW_HIDE, WS_EX_TOOLWINDOW,
                     };
                     let mut rect = RECT::default();
                     if unsafe { GetWindowRect(hwnd, &mut rect).is_ok() } {
@@ -2146,9 +2179,22 @@ impl SpectreApp {
                         let w = rect.right - rect.left;
                         let h = rect.bottom - rect.top;
                         self.saved_tray_rect = Some((x, y, w, h));
+                        let ex = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
                         let _ = unsafe {
-                            SetWindowPos(hwnd, HWND_BOTTOM, -32000, -32000, 1, 1, SWP_NOACTIVATE)
+                            SetWindowLongW(hwnd, GWL_EXSTYLE, ex | (WS_EX_TOOLWINDOW.0 as i32))
                         };
+                        let _ = unsafe {
+                            SetWindowPos(
+                                hwnd,
+                                windows::Win32::Foundation::HWND::default(),
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+                            )
+                        };
+                        let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
                         self.window_hidden_to_tray = true;
                     }
                 }
@@ -2191,12 +2237,39 @@ impl SpectreApp {
                     self.window_hidden_to_tray = false;
                     if let Some(hwnd) = get_main_window_hwnd_opt(frame_ref) {
                         use windows::Win32::UI::WindowsAndMessaging::{
-                            SetForegroundWindow, SetWindowPos, HWND_TOP, SWP_NOACTIVATE,
+                            GetWindowLongW, SetForegroundWindow, SetWindowLongW, SetWindowPos,
+                            ShowWindow, GWL_EXSTYLE, HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+                            SWP_NOMOVE, SWP_NOSIZE, SW_SHOW, WS_EX_TOOLWINDOW,
                         };
                         if let Some((x, y, w, h)) = self.saved_tray_rect.take() {
-                            let _ =
-                                unsafe { SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE) };
+                            let _ = unsafe {
+                                SetWindowPos(
+                                    hwnd,
+                                    HWND_TOP,
+                                    x,
+                                    y,
+                                    w,
+                                    h,
+                                    SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                                )
+                            };
                         }
+                        let ex = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
+                        let _ = unsafe {
+                            SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TOOLWINDOW.0 as i32))
+                        };
+                        let _ = unsafe {
+                            SetWindowPos(
+                                hwnd,
+                                windows::Win32::Foundation::HWND::default(),
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+                            )
+                        };
+                        let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
                         let _ = unsafe { SetForegroundWindow(hwnd) };
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -2324,7 +2397,7 @@ impl SpectreApp {
                         let scale = ctx
                             .input(|i| i.viewport().native_pixels_per_point)
                             .unwrap_or(1.0);
-                        let screen = ctx.screen_rect();
+                        let screen = ctx.content_rect();
                         const ACTION_BAR_HEIGHT: f32 = 32.0;
                         let bounds = wry::Rect {
                             x: 0,
@@ -2703,7 +2776,7 @@ impl SpectreApp {
             let scale = ctx
                 .input(|i| i.viewport().native_pixels_per_point)
                 .unwrap_or(1.0);
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             const ACTION_BAR_HEIGHT: f32 = 32.0;
             let h = ((screen.height() - ACTION_BAR_HEIGHT) * scale).max(1.0) as u32;
             let bounds = wry::Rect {
@@ -2902,13 +2975,13 @@ impl SpectreApp {
                             let _ = std::fs::write(&last_restart_path, now_secs.to_string());
                         } else {
                             let stage = self.restart_announce_stage.unwrap_or(0);
-                            if left_secs <= 10 && stage < 3 {
+                            if left_secs > 5 && left_secs <= 10 && stage < 3 {
                                 send_asay_all("Server restart in 10 seconds.");
                                 self.restart_announce_stage = Some(3);
-                            } else if left_secs <= 60 && stage < 2 {
+                            } else if left_secs > 50 && left_secs <= 60 && stage < 2 {
                                 send_asay_all("Server restart in 1 minute.");
                                 self.restart_announce_stage = Some(2);
-                            } else if left_secs <= 300 && stage < 1 {
+                            } else if left_secs > 240 && left_secs <= 300 && stage < 1 {
                                 send_asay_all("Server restart in 5 minutes.");
                                 self.restart_announce_stage = Some(1);
                             }
@@ -3047,8 +3120,10 @@ impl SpectreApp {
                         };
                         if do_restart {
                             if data.server_manager.enable_restart_announcements {
-                                self.restart_scheduled_at = Some(now + Duration::from_secs(300));
-                                self.restart_announce_stage = None;
+                                if self.restart_scheduled_at.is_none() {
+                                    self.restart_scheduled_at = Some(now + Duration::from_secs(300));
+                                    self.restart_announce_stage = None;
+                                }
                             } else {
                                 let to_kill: Vec<(u16, u32)> = match self.server_pids.lock() {
                                     Ok(pids) => data
@@ -3179,7 +3254,7 @@ impl SpectreApp {
             self.center_attempts += 1;
 
             let monitor_size = ctx.input(|i| i.viewport().monitor_size);
-            let screen_size = ctx.screen_rect().size();
+            let screen_size = ctx.content_rect().size();
 
             let size_to_use = monitor_size
                 .filter(|s| s.x > 100.0 && s.y > 100.0)
@@ -3227,7 +3302,7 @@ impl SpectreApp {
                     const APP_WINDOW_SIZE: (f32, f32) = (1024.0, 768.0);
                     const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
                     let monitor_size = ctx.input(|i| i.viewport().monitor_size)
-                        .or_else(|| Some(ctx.screen_rect().size()));
+                        .or_else(|| Some(ctx.content_rect().size()));
                     let (w, h) = if let Some(ref m) = monitor_size {
                         let max_w = (m.x * 0.95).max(MIN_WINDOW_SIZE.0);
                         let max_h = (m.y * 0.95).max(MIN_WINDOW_SIZE.1);
@@ -3250,7 +3325,7 @@ impl SpectreApp {
                         )));
                         println!("[Spectre.dbg] Main window re-centered at: ({}, {})", center_x, center_y);
                     } else {
-                        let screen_size = ctx.screen_rect().size();
+                        let screen_size = ctx.content_rect().size();
                         let center_x = (screen_size.x - w) / 2.0;
                         let center_y = (screen_size.y - h) / 2.0;
                         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
@@ -3269,7 +3344,7 @@ impl SpectreApp {
                 egui::Area::new(egui::Id::new("fade_overlay"))
                     .interactable(false)
                     .show(ctx, |ui| {
-                        let screen_rect = ctx.screen_rect();
+                        let screen_rect = ctx.content_rect();
                         let painter = ui.painter();
                         let fade_alpha = splash.get_fade_out_alpha();
                         painter.rect_filled(
@@ -3289,7 +3364,7 @@ impl SpectreApp {
         if self.show_options {
             let options_size = egui::vec2(560.0, 520.0);
             let options_max = egui::vec2(600.0, 900.0);
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             let options_pos = egui::pos2(
                 screen.center().x - options_size.x / 2.0,
                 screen.center().y - options_size.y / 2.0,
@@ -3311,7 +3386,7 @@ impl SpectreApp {
                                 const APP_WINDOW_SIZE: (f32, f32) = (1024.0, 768.0);
                                 const MIN_WINDOW_SIZE: (f32, f32) = (640.0, 480.0);
                                 let monitor_size = ctx.input(|i| i.viewport().monitor_size)
-                                    .or_else(|| Some(ctx.screen_rect().size()));
+                                    .or_else(|| Some(ctx.content_rect().size()));
                                 let (w, h) = if let Some(ref m) = monitor_size {
                                     let max_w = (m.x * 0.95).max(MIN_WINDOW_SIZE.0);
                                     let max_h = (m.y * 0.95).max(MIN_WINDOW_SIZE.1);
@@ -3326,7 +3401,7 @@ impl SpectreApp {
                                     let center_y = (monitor_size.y - h) / 2.0;
                                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
                                 } else {
-                                    let screen_size = ctx.screen_rect().size();
+                                    let screen_size = ctx.content_rect().size();
                                     let center_x = (screen_size.x - w) / 2.0;
                                     let center_y = (screen_size.y - h) / 2.0;
                                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(center_x.max(0.0), center_y.max(0.0))));
@@ -3493,7 +3568,7 @@ impl SpectreApp {
                 #[cfg(windows)]
                 if self.webview_pending_creation.is_some() {
                     self.show_action_bar(ui, true);
-                    ui.allocate_ui_at_rect(ui.available_rect_before_wrap(), |ui| {
+                    ui.scope_builder(egui::UiBuilder::default().max_rect(ui.available_rect_before_wrap()), |ui| {
                         ui.vertical_centered(|ui| {
                             ui.spinner();
                             ui.add_space(8.0);
@@ -3509,7 +3584,7 @@ impl SpectreApp {
                 if self.show_server_utility_dashboard {
                     self.show_action_bar(ui, true);
                     let content_rect = ui.available_rect_before_wrap();
-                    ui.allocate_ui_at_rect(content_rect, |ui| {
+                    ui.scope_builder(egui::UiBuilder::default().max_rect(content_rect), |ui| {
                         self.show_server_utility_dashboard_ui(ctx, ui);
                     });
                     return;
@@ -3534,7 +3609,7 @@ impl SpectreApp {
                     ui.add_space(4.0);
                     if let Some(ref mut module) = self.current_module {
                         let module_rect = ui.available_rect_before_wrap();
-                        ui.allocate_ui_at_rect(module_rect, |ui| {
+                        ui.scope_builder(egui::UiBuilder::default().max_rect(module_rect), |ui| {
                             module.show(ctx, ui);
                         });
                     }
