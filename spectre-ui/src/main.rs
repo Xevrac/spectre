@@ -939,6 +939,18 @@ struct SpectreApp {
     #[cfg(windows)]
     last_watchdog_check: Option<Instant>,
     #[cfg(windows)]
+    restart_scheduled_at: Option<Instant>,
+    #[cfg(windows)]
+    restart_announce_stage: Option<u8>,
+    #[cfg(windows)]
+    last_automated_announce: Option<Instant>,
+    #[cfg(windows)]
+    automated_announce_index: usize,
+    #[cfg(windows)]
+    last_automated_announce_per_port: Arc<Mutex<HashMap<u16, Instant>>>,
+    #[cfg(windows)]
+    automated_announce_index_per_port: Arc<Mutex<HashMap<u16, usize>>>,
+    #[cfg(windows)]
     tray_icon: Option<tray_icon::TrayIcon>,
     #[cfg(windows)]
     tray_show_id: Option<tray_icon::menu::MenuId>,
@@ -1027,6 +1039,18 @@ impl SpectreApp {
             server_pids: Arc::new(Mutex::new(initial_pids)),
             #[cfg(windows)]
             last_watchdog_check: None,
+            #[cfg(windows)]
+            restart_scheduled_at: None,
+            #[cfg(windows)]
+            restart_announce_stage: None,
+            #[cfg(windows)]
+            last_automated_announce: None,
+            #[cfg(windows)]
+            automated_announce_index: 0,
+            #[cfg(windows)]
+            last_automated_announce_per_port: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(windows)]
+            automated_announce_index_per_port: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(windows)]
             tray_icon: None,
             #[cfg(windows)]
@@ -2810,6 +2834,150 @@ impl SpectreApp {
                 if let Ok(data) =
                     spectre_core::server::ServerLauncherData::load_from_file(&config_path)
                 {
+                    let pids_copy: Vec<(u16, u32)> = match self.server_pids.lock() {
+                        Ok(pids) => pids.iter().map(|(&port, &pid)| (port, pid)).collect(),
+                        Err(_) => Vec::new(),
+                    };
+                    let send_asay_all = |msg: &str| {
+                        let msg = msg.to_string();
+                        let pids: Vec<u32> = pids_copy.iter().map(|(_, pid)| *pid).collect();
+                        if pids.is_empty() {
+                            return;
+                        }
+                        std::thread::spawn(move || {
+                            for pid in pids {
+                                ds_helper::send_asay_to_pid(pid, &msg);
+                                std::thread::sleep(Duration::from_millis(150));
+                            }
+                        });
+                    };
+                    if let Some(restart_at) = self.restart_scheduled_at {
+                        let left_secs = restart_at.saturating_duration_since(now).as_secs();
+                        if left_secs == 0 {
+                            send_asay_all("Restarting now.");
+                            self.restart_scheduled_at = None;
+                            self.restart_announce_stage = None;
+                            let to_kill: Vec<(u16, u32)> = pids_copy;
+                            if let Ok(mut pids) = self.server_pids.lock() {
+                                for (port, _) in &to_kill {
+                                    pids.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut k) = self.helper_kicked.lock() {
+                                for (port, _) in &to_kill {
+                                    k.remove(port);
+                                }
+                            }
+                            #[cfg(windows)]
+                            if let Ok(mut last) = self.helper_last_slots.lock() {
+                                for (port, _) in &to_kill {
+                                    last.remove(port);
+                                }
+                            }
+                            for (_, pid) in &to_kill {
+                                kill_process_by_pid(*pid);
+                            }
+                            std::thread::sleep(Duration::from_secs(2));
+                            for server in &data.servers {
+                                if let Ok(pid) = spectre_core::ds_launch::start_ds(server) {
+                                    if let Ok(mut pids) = self.server_pids.lock() {
+                                        pids.insert(server.port, pid);
+                                    }
+                                    println!(
+                                        "[Watchdog] Timed restart: started {} (port {} pid {})",
+                                        server.name, server.port, pid
+                                    );
+                                }
+                                std::thread::sleep(Duration::from_millis(500));
+                            }
+                            let last_restart_path = config_path
+                                .parent()
+                                .map(|p| p.join("last_restart.txt"))
+                                .unwrap_or_else(|| std::path::PathBuf::from("last_restart.txt"));
+                            let now_secs = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or(Duration::ZERO)
+                                .as_secs();
+                            let _ = std::fs::write(&last_restart_path, now_secs.to_string());
+                        } else {
+                            let stage = self.restart_announce_stage.unwrap_or(0);
+                            if left_secs <= 10 && stage < 3 {
+                                send_asay_all("Server restart in 10 seconds.");
+                                self.restart_announce_stage = Some(3);
+                            } else if left_secs <= 60 && stage < 2 {
+                                send_asay_all("Server restart in 1 minute.");
+                                self.restart_announce_stage = Some(2);
+                            } else if left_secs <= 300 && stage < 1 {
+                                send_asay_all("Server restart in 5 minutes.");
+                                self.restart_announce_stage = Some(1);
+                            }
+                        }
+                    } else if data.server_manager.use_global_announcements
+                        && data.server_manager.enable_automated_announcements
+                        && !data.server_manager.automated_announcements.is_empty()
+                    {
+                        let interval_mins = data
+                            .server_manager
+                            .automated_announcement_interval_minutes
+                            .max(1);
+                        let interval = Duration::from_secs(interval_mins as u64 * 60);
+                        let should_send = self.last_automated_announce.map_or(true, |t| {
+                            now.duration_since(t) >= interval
+                        });
+                        if should_send {
+                            let list = &data.server_manager.automated_announcements;
+                            let idx = self.automated_announce_index % list.len();
+                            let msg = list[idx].as_str();
+                            if !msg.trim().is_empty() {
+                                send_asay_all(msg);
+                            }
+                            self.automated_announce_index = self.automated_announce_index.wrapping_add(1);
+                            self.last_automated_announce = Some(now);
+                        }
+                    } else if !data.server_manager.use_global_announcements
+                    {
+                        for (port, pid) in &pids_copy {
+                            let server = match data.servers.iter().find(|s| s.port == *port) {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            if !server.enable_automated_announcements
+                                || server.automated_announcements.is_empty()
+                            {
+                                continue;
+                            }
+                            let interval_mins = server.automated_announcement_interval_minutes.max(1);
+                            let interval = Duration::from_secs(interval_mins as u64 * 60);
+                            let (should_send, idx) = {
+                                let last_map = match self.last_automated_announce_per_port.lock() {
+                                    Ok(m) => m,
+                                    Err(_) => continue,
+                                };
+                                let idx_map = match self.automated_announce_index_per_port.lock() {
+                                    Ok(m) => m,
+                                    Err(_) => continue,
+                                };
+                                let last = last_map.get(port).copied();
+                                let should = last.map_or(true, |t| now.duration_since(t) >= interval);
+                                let idx = *idx_map.get(port).unwrap_or(&0);
+                                (should, idx)
+                            };
+                            if should_send {
+                                let list = &server.automated_announcements;
+                                let msg = list.get(idx % list.len()).map(|s| s.as_str()).unwrap_or("");
+                                if !msg.trim().is_empty() {
+                                    ds_helper::send_asay_to_pid(*pid, msg);
+                                }
+                                if let Ok(mut m) = self.last_automated_announce_per_port.lock() {
+                                    m.insert(*port, now);
+                                }
+                                if let Ok(mut m) = self.automated_announce_index_per_port.lock() {
+                                    m.insert(*port, idx.wrapping_add(1));
+                                }
+                            }
+                        }
+                    }
                     if data.server_manager.enable_watchdog {
                         let dead_ports: Vec<u16> = match self.server_pids.lock() {
                             Ok(pids) => pids
@@ -2878,50 +3046,55 @@ impl SpectreApp {
                             Err(_) => true,
                         };
                         if do_restart {
-                            let to_kill: Vec<(u16, u32)> = match self.server_pids.lock() {
-                                Ok(pids) => data
-                                    .servers
-                                    .iter()
-                                    .filter_map(|s| {
-                                        pids.get(&s.port).copied().map(|pid| (s.port, pid))
-                                    })
-                                    .collect(),
-                                Err(_) => Vec::new(),
-                            };
-                            if let Ok(mut pids) = self.server_pids.lock() {
-                                for (port, _) in &to_kill {
-                                    pids.remove(port);
-                                }
-                            }
-                            #[cfg(windows)]
-                            if let Ok(mut k) = self.helper_kicked.lock() {
-                                for (port, _) in &to_kill {
-                                    k.remove(port);
-                                }
-                            }
-                            #[cfg(windows)]
-                            if let Ok(mut last) = self.helper_last_slots.lock() {
-                                for (port, _) in &to_kill {
-                                    last.remove(port);
-                                }
-                            }
-                            for (_, pid) in &to_kill {
-                                kill_process_by_pid(*pid);
-                            }
-                            std::thread::sleep(Duration::from_secs(2));
-                            for server in &data.servers {
-                                if let Ok(pid) = spectre_core::ds_launch::start_ds(server) {
-                                    if let Ok(mut pids) = self.server_pids.lock() {
-                                        pids.insert(server.port, pid);
+                            if data.server_manager.enable_restart_announcements {
+                                self.restart_scheduled_at = Some(now + Duration::from_secs(300));
+                                self.restart_announce_stage = None;
+                            } else {
+                                let to_kill: Vec<(u16, u32)> = match self.server_pids.lock() {
+                                    Ok(pids) => data
+                                        .servers
+                                        .iter()
+                                        .filter_map(|s| {
+                                            pids.get(&s.port).copied().map(|pid| (s.port, pid))
+                                        })
+                                        .collect(),
+                                    Err(_) => Vec::new(),
+                                };
+                                if let Ok(mut pids) = self.server_pids.lock() {
+                                    for (port, _) in &to_kill {
+                                        pids.remove(port);
                                     }
-                                    println!(
-                                        "[Watchdog] Timed restart: started {} (port {} pid {})",
-                                        server.name, server.port, pid
-                                    );
                                 }
-                                std::thread::sleep(Duration::from_millis(500));
+                                #[cfg(windows)]
+                                if let Ok(mut k) = self.helper_kicked.lock() {
+                                    for (port, _) in &to_kill {
+                                        k.remove(port);
+                                    }
+                                }
+                                #[cfg(windows)]
+                                if let Ok(mut last) = self.helper_last_slots.lock() {
+                                    for (port, _) in &to_kill {
+                                        last.remove(port);
+                                    }
+                                }
+                                for (_, pid) in &to_kill {
+                                    kill_process_by_pid(*pid);
+                                }
+                                std::thread::sleep(Duration::from_secs(2));
+                                for server in &data.servers {
+                                    if let Ok(pid) = spectre_core::ds_launch::start_ds(server) {
+                                        if let Ok(mut pids) = self.server_pids.lock() {
+                                            pids.insert(server.port, pid);
+                                        }
+                                        println!(
+                                            "[Watchdog] Timed restart: started {} (port {} pid {})",
+                                            server.name, server.port, pid
+                                        );
+                                    }
+                                    std::thread::sleep(Duration::from_millis(500));
+                                }
+                                let _ = std::fs::write(&last_restart_path, now_secs.to_string());
                             }
-                            let _ = std::fs::write(&last_restart_path, now_secs.to_string());
                         }
                     }
                     let pids_copy: Vec<(u16, u32)> = match self.server_pids.lock() {

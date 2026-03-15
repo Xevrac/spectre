@@ -98,8 +98,34 @@ unsafe extern "system" fn enum_callback(
     windows::Win32::Foundation::BOOL(1)
 }
 
+/// Sends a message in-game via asay. Truncates to ASA_MAX_LEN. No-op if pid has no window.
+/// Uses no-focus send so the game window does not lose focus (avoids input freezes every 5s).
+pub fn send_asay_to_pid(pid: u32, message: &str) {
+    let trimmed: String = message.chars().take(ASA_MAX_LEN).collect();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(hwnd) = find_main_window_by_pid(pid) {
+        send_command_to_ds_no_focus(hwnd, &format!("asay {}", trimmed));
+    }
+}
+
+/// Sends a command to the DS console without stealing focus. PostMessage is delivered to the
+/// window queue regardless of foreground. Use for automated asay so the game stays responsive.
+pub(crate) fn send_command_to_ds_no_focus(hwnd: windows::Win32::Foundation::HWND, command: &str) {
+    for ch in command.chars() {
+        let code = ch as u32;
+        if code <= 0xFFFF {
+            let _ = unsafe { PostMessageW(hwnd, WM_CHAR, WPARAM(code as _), LPARAM(0)) };
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+    let _ = unsafe { PostMessageW(hwnd, WM_KEYDOWN, WPARAM(VK_RETURN.0 as _), LPARAM(0)) };
+    std::thread::sleep(std::time::Duration::from_millis(25));
+}
+
 /// Types a command into the DS console window (PostMessage WM_CHAR + Enter).
-/// This focuses the DS console briefly so keyboard input is accepted.
+/// Steals focus briefly; use only when user-initiated. Prefer send_command_to_ds_no_focus for automation.
 pub fn send_command_to_ds(hwnd: windows::Win32::Foundation::HWND, command: &str) {
     let _ = unsafe { SetForegroundWindow(hwnd) };
     std::thread::sleep(std::time::Duration::from_millis(120));
@@ -367,10 +393,10 @@ pub fn enforce_player_lists(
             }
             let asay_msg = asay_message_for_kick(&name, &kick_reason, matching_entry);
             if let Some(h) = hwnd {
-                send_command_to_ds(h, &format!("asay {}", asay_msg));
-                std::thread::sleep(std::time::Duration::from_millis(400));
+                send_command_to_ds_no_focus(h, &format!("asay {}", asay_msg));
+                std::thread::sleep(std::time::Duration::from_millis(80));
                 let cmd = format!("kickplayer {}", name.trim());
-                send_command_to_ds(h, &cmd);
+                send_command_to_ds_no_focus(h, &cmd);
                 kicked.insert(name);
             }
         }

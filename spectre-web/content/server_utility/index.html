@@ -331,6 +331,44 @@
                   <label for="log-rotation-days">Rotate logs after (days)</label>
                   <input type="number" class="input input-num" id="log-rotation-days" min="0" max="365" value="0" aria-label="Clear log file after this many days, 0 = no rotation">
                 </div>
+                <div class="form-row form-row-full">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="watchdog-restart-announce"> Announce before timed restart (T-5min, T-1min, T-10s, restarting now)
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="panel-card announcements-card">
+              <h2 class="panel-heading">Automated announcements</h2>
+              <p class="map-hint">Broadcast messages in-game via <code>asay</code> (max 43 chars). Choose one list for all servers or a list per server.</p>
+              <div class="announcements-settings">
+                <div class="form-row">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="automated-announcements-enable"> Enable
+                  </label>
+                </div>
+                <div class="form-row">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="automated-announcements-global" checked> Apply to all servers (global list)
+                  </label>
+                </div>
+                <p class="announcements-for-server" id="announcements-for-server" aria-live="polite"></p>
+                <div class="form-row">
+                  <label for="automated-announcements-interval">Interval (min)</label>
+                  <input type="number" class="input input-num input-num-sm" id="automated-announcements-interval" min="1" max="1440" value="5" aria-label="Minutes between each announcement">
+                </div>
+                <div class="form-row announcements-add-row">
+                  <label for="automated-announcements-add" class="sr-only">Add message</label>
+                  <div class="announcements-add-wrap">
+                    <input type="text" class="input announcements-input" id="automated-announcements-add" placeholder="Message (43 chars max)" maxlength="43" aria-label="Announcement message">
+                    <span class="char-counter" id="automated-announcements-counter" aria-live="polite">0/43</span>
+                    <button type="button" class="btn btn-sm" id="automated-announcements-add-btn">Add</button>
+                  </div>
+                </div>
+                <ul class="map-list list-single announcements-list" id="automated-announcements-list" role="listbox" aria-label="Announcement messages"></ul>
+                <div class="list-actions-inline">
+                  <button type="button" class="btn btn-sm" id="automated-announcements-remove" title="Remove selected">Remove selected</button>
+                </div>
               </div>
             </div>
           </div>

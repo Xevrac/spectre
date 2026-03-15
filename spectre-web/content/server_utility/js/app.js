@@ -66,7 +66,12 @@
       restart_interval_days: 0,
       log_rotation_days: 0,
       enable_forced_ban_list: true,
-      forced_ban_list: []
+      forced_ban_list: [],
+      enable_restart_announcements: false,
+      use_global_announcements: true,
+      enable_automated_announcements: false,
+      automated_announcements: [],
+      automated_announcement_interval_minutes: 5
     }
   };
 
@@ -253,7 +258,21 @@
       setCheck('watchdog-restart-on-crash', sm.enable_watchdog != null ? sm.enable_watchdog : true);
       set('watchdog-restart-days', sm.restart_interval_days != null ? sm.restart_interval_days : 0);
       set('log-rotation-days', sm.log_rotation_days != null ? sm.log_rotation_days : 0);
+      setCheck('watchdog-restart-announce', sm.enable_restart_announcements != null ? sm.enable_restart_announcements : false);
+      setCheck('automated-announcements-global', sm.use_global_announcements != null ? sm.use_global_announcements : true);
+      var useGlobal = document.getElementById('automated-announcements-global') ? document.getElementById('automated-announcements-global').checked : true;
+      if (useGlobal) {
+        setCheck('automated-announcements-enable', sm.enable_automated_announcements != null ? sm.enable_automated_announcements : false);
+        set('automated-announcements-interval', sm.automated_announcement_interval_minutes != null ? sm.automated_announcement_interval_minutes : 5);
+      } else if (s) {
+        if (!Array.isArray(s.automated_announcements)) s.automated_announcements = [];
+        setCheck('automated-announcements-enable', s.enable_automated_announcements != null ? s.enable_automated_announcements : false);
+        set('automated-announcements-interval', s.automated_announcement_interval_minutes != null ? s.automated_announcement_interval_minutes : 5);
+      }
+      var forEl = document.getElementById('announcements-for-server');
+      if (forEl) forEl.textContent = !useGlobal && s ? 'For: ' + (s.name || 'Server') : '';
     }
+    renderAutomatedAnnouncementsList();
     setCheck('enable-whitelist', c.enable_whitelist != null ? c.enable_whitelist : false);
   }
 
@@ -328,6 +347,24 @@
         var ld = parseInt(logDaysEl.value, 10);
         sm.log_rotation_days = (isNaN(ld) || ld < 0) ? 0 : Math.min(365, ld);
       }
+      var restartAnnounceEl = document.getElementById('watchdog-restart-announce');
+      sm.enable_restart_announcements = restartAnnounceEl ? restartAnnounceEl.checked : (sm.enable_restart_announcements != null ? sm.enable_restart_announcements : false);
+      var globalEl = document.getElementById('automated-announcements-global');
+      sm.use_global_announcements = globalEl ? globalEl.checked : (sm.use_global_announcements != null ? sm.use_global_announcements : true);
+      var useGlobal = sm.use_global_announcements;
+      var autoAnnEnableEl = document.getElementById('automated-announcements-enable');
+      var intervalEl = document.getElementById('automated-announcements-interval');
+      var iv = intervalEl ? parseInt(intervalEl.value, 10) : 5;
+      iv = (isNaN(iv) || iv < 1) ? 5 : Math.min(1440, iv);
+      if (useGlobal) {
+        sm.enable_automated_announcements = autoAnnEnableEl ? autoAnnEnableEl.checked : (sm.enable_automated_announcements != null ? sm.enable_automated_announcements : false);
+        sm.automated_announcement_interval_minutes = iv;
+        if (!Array.isArray(sm.automated_announcements)) sm.automated_announcements = [];
+      } else if (s) {
+        s.enable_automated_announcements = autoAnnEnableEl ? autoAnnEnableEl.checked : (s.enable_automated_announcements != null ? s.enable_automated_announcements : false);
+        s.automated_announcement_interval_minutes = iv;
+        if (!Array.isArray(s.automated_announcements)) s.automated_announcements = [];
+      }
     }
   }
 
@@ -335,6 +372,7 @@
   let selectedAvailableMapIndex = -1;
   let selectedBanIndex = -1;
   let selectedWhitelistIndex = -1;
+  let selectedAutomatedAnnounceIndex = -1;
   let unsavedChanges = false;
   let unsavedPollInterval = null;
   const UNSAVED_POLL_MS = 400;
@@ -516,6 +554,30 @@
     }).join('');
   }
 
+  const ASA_MAX_LEN = 43;
+  function getAnnouncementsList() {
+    const sm = state.server_manager;
+    const useGlobal = sm && sm.use_global_announcements !== false;
+    if (useGlobal && sm) return Array.isArray(sm.automated_announcements) ? sm.automated_announcements : [];
+    const s = getSelectedServer();
+    if (s && Array.isArray(s.automated_announcements)) return s.automated_announcements;
+    return [];
+  }
+  function renderAutomatedAnnouncementsList() {
+    const ul = document.getElementById('automated-announcements-list');
+    if (!ul) return;
+    const list = getAnnouncementsList();
+    if (selectedAutomatedAnnounceIndex >= list.length) selectedAutomatedAnnounceIndex = -1;
+    if (list.length === 0) {
+      ul.innerHTML = '<li class="empty-hint">No messages. Add a message above (max 43 chars).</li>';
+      selectedAutomatedAnnounceIndex = -1;
+      return;
+    }
+    ul.innerHTML = list.map(function (msg, i) {
+      return '<li class="' + (i === selectedAutomatedAnnounceIndex ? 'selected' : '') + '" data-index="' + i + '">' + escapeHtml(msg) + '</li>';
+    }).join('');
+  }
+
   function renderCurrentPlayersTable() {
     const tbody = document.getElementById('current-players-tbody');
     if (!tbody) return;
@@ -573,6 +635,7 @@
     renderMapList();
     renderBanList();
     renderWhitelist();
+    renderAutomatedAnnouncementsList();
     renderCurrentPlayersTable();
     const gameSelect = document.getElementById('game-select');
     if (gameSelect && s) gameSelect.value = s.use_sabre_squadron ? 'sabre' : 'hd2';
@@ -1207,6 +1270,13 @@
       renderWhitelist();
       return;
     }
+    const autoAnnLi = e.target.closest('#automated-announcements-list li[data-index]');
+    if (autoAnnLi) {
+      const idx = parseInt(autoAnnLi.dataset.index, 10);
+      selectedAutomatedAnnounceIndex = idx;
+      renderAutomatedAnnouncementsList();
+      return;
+    }
     const banBtn = e.target.closest('.btn-ban-row');
     if (banBtn && document.getElementById('current-players-tbody')?.contains(banBtn)) {
       const ip = (banBtn.getAttribute('data-ip') || '').trim();
@@ -1275,6 +1345,43 @@
     if (c.ban_list.length === 0) selectedBanIndex = -1;
     setUnsaved(true);
     renderBanList();
+  });
+
+  document.getElementById('automated-announcements-global')?.addEventListener('change', function () {
+    bindConfigToForm();
+    bindFormToConfig();
+    renderAutomatedAnnouncementsList();
+    setUnsaved(true);
+  });
+  document.getElementById('automated-announcements-add')?.addEventListener('input', function () {
+    const el = document.getElementById('automated-announcements-counter');
+    if (el) el.textContent = (this.value || '').length + '/' + ASA_MAX_LEN;
+  });
+  document.getElementById('automated-announcements-add-btn')?.addEventListener('click', function () {
+    const sm = state.server_manager;
+    const useGlobal = sm && document.getElementById('automated-announcements-global') && document.getElementById('automated-announcements-global').checked;
+    const list = useGlobal && sm ? (sm.automated_announcements || (sm.automated_announcements = [])) : (function () { var s = getSelectedServer(); if (!s) return null; if (!Array.isArray(s.automated_announcements)) s.automated_announcements = []; return s.automated_announcements; })();
+    if (!list) return;
+    const inputEl = document.getElementById('automated-announcements-add');
+    if (!inputEl) return;
+    const msg = (inputEl.value || '').trim().slice(0, ASA_MAX_LEN);
+    if (!msg) return;
+    list.push(msg);
+    inputEl.value = '';
+    const counterEl = document.getElementById('automated-announcements-counter');
+    if (counterEl) counterEl.textContent = '0/' + ASA_MAX_LEN;
+    selectedAutomatedAnnounceIndex = list.length - 1;
+    setUnsaved(true);
+    renderAutomatedAnnouncementsList();
+  });
+  document.getElementById('automated-announcements-remove')?.addEventListener('click', function () {
+    const list = getAnnouncementsList();
+    if (list.length === 0 || selectedAutomatedAnnounceIndex < 0 || selectedAutomatedAnnounceIndex >= list.length) return;
+    list.splice(selectedAutomatedAnnounceIndex, 1);
+    selectedAutomatedAnnounceIndex = Math.min(selectedAutomatedAnnounceIndex, list.length - 1);
+    if (list.length === 0) selectedAutomatedAnnounceIndex = -1;
+    setUnsaved(true);
+    renderAutomatedAnnouncementsList();
   });
 
   // whitelist events keep their own click handlers for add/remove;

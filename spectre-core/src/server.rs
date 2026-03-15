@@ -13,6 +13,25 @@ pub struct ServerManager {
     /// Rotate (clear) app log file after this many days to save space. 0 = no rotation.
     #[serde(default)]
     pub log_rotation_days: u32,
+    /// When enabled, broadcast messages from automated_announcements in-game on an interval.
+    #[serde(default)]
+    pub enable_automated_announcements: bool,
+    /// Messages sent in-game via asay (max 43 chars each). Cycled when automated announcements enabled.
+    #[serde(default)]
+    pub automated_announcements: Vec<String>,
+    /// Minutes between each automated announcement. 0 = use 5.
+    #[serde(default)]
+    pub automated_announcement_interval_minutes: u32,
+    /// When enabled, before a timed watchdog restart broadcast T-5min, T-1min, T-10s, then "Restarting now".
+    #[serde(default)]
+    pub enable_restart_announcements: bool,
+    /// When true, one announcement list for all servers; when false, each server has its own list.
+    #[serde(default = "default_true")]
+    pub use_global_announcements: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +105,12 @@ pub struct Server {
     pub available_maps_by_style: HashMap<String, Vec<String>>,
     pub current_config: String,
     pub configs: Vec<ServerConfig>,
+    #[serde(default)]
+    pub enable_automated_announcements: bool,
+    #[serde(default)]
+    pub automated_announcements: Vec<String>,
+    #[serde(default)]
+    pub automated_announcement_interval_minutes: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +128,11 @@ impl Default for ServerManager {
             enable_forced_ban_list: true,
             forced_ban_list: Vec::new(),
             log_rotation_days: 0,
+            enable_automated_announcements: false,
+            automated_announcements: Vec::new(),
+            automated_announcement_interval_minutes: 5,
+            enable_restart_announcements: false,
+            use_global_announcements: true,
         }
     }
 }
@@ -167,6 +197,9 @@ impl Default for Server {
             available_maps_by_style: HashMap::new(),
             current_config: String::new(),
             configs: Vec::new(),
+            enable_automated_announcements: false,
+            automated_announcements: Vec::new(),
+            automated_announcement_interval_minutes: 5,
         }
     }
 }
