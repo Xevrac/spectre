@@ -36,6 +36,16 @@ Requires Spectre to be running for watchdog and automated features. One local se
 - Gamedata (Planned)
    - A gamedata editor allowing for campaign modifications
 
+## Media
+### Server Utility
+<img width="2549" height="1267" alt="image" src="https://github.com/user-attachments/assets/d92e66c7-3129-49fc-a3a2-3048a8425a98" />
+
+<img width="2551" height="1263" alt="image" src="https://github.com/user-attachments/assets/fe327b8f-3773-4e72-85e0-317b46f49093" />
+
+<img width="2549" height="1263" alt="image" src="https://github.com/user-attachments/assets/719d0a90-5a71-410b-94a0-1d0ad725626a" />
+
+<img width="2540" height="1263" alt="image" src="https://github.com/user-attachments/assets/1685cf91-97f8-42ea-a538-395869258e02" />
+
 # Credits
 A special thanks to those who have worked on previous projects, research, sharing knowledge, source code and supported the HD2 community. Notably:
 - Fis
